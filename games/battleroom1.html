@@ -6,7 +6,7 @@
   <title>배틀룸 1</title>
   <style>
 
-@import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css");
+    @import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css");
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -359,36 +359,24 @@
     /* 다이스 */
     #dice-wrap {
       display: none;
-      position: fixed;
-      inset: 0;
-      background: rgba(0,0,0,0.4);
-      z-index: 200;
+      flex-direction: row;
       align-items: center;
       justify-content: center;
-      gap: 20px;
-      flex-wrap: wrap;
+      gap: 24px;
+      width: 100%;
     }
-    .dice-box {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 6px;
-    }
-    .dice-name { font-size: 12px; color: #666; }
+    .dice-box { text-align: center; }
+    .dice-name { display: block; font-size: 12px; color: #ccc; margin-bottom: 2px; }
     .dice-num {
-      width: 60px; height: 60px;
-      background: #ffffff;
-      border: 2px solid #4a9eff;
-      border-radius: 10px;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 28px; font-weight: bold; color: #fff;
+      font-size: 48px; font-weight: bold;
+      color: #e63946; min-width: 56px; text-align: center;
     }
-    @keyframes popAnim {
+    @keyframes pop {
       0%   { transform: scale(1); }
-      40%  { transform: scale(1.4); color: #ffd700; }
+      40%  { transform: scale(1.4); }
       100% { transform: scale(1); }
     }
-    .dice-num.pop { animation: popAnim 0.4s ease; }
+    .dice-num.pop { animation: pop 0.1s ease-out; }
 
     /* 라운드 알림 */
     #round-banner {
@@ -424,7 +412,7 @@
   <div class="name-group">
     🔵 <span id="p1-name">???</span> &amp; <span id="p2-name">???</span>
   </div>
-  <div style="display:flex;gap:12px;align-items:center;">
+  <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
     <span id="turn-display">대기 중</span>
     <span id="turn-count"></span>
   </div>
@@ -540,8 +528,8 @@
   <button class="target-btn cancel" id="target-cancel-btn">취소</button>
 </div>
 
-<!-- 다이스 오버레이 -->
-<div id="dice-wrap">
+<!-- 다이스 -->
+<div id="dice-wrap" style="display:none; position:fixed; inset:0; z-index:300; background:rgba(0,0,0,0.55); flex-direction:row; align-items:center; justify-content:center; gap:32px; flex-wrap:wrap;">
   <div class="dice-box" id="dice-box-p1">
     <span class="dice-name" id="p1-name-dice">P1</span>
     <div class="dice-num" id="dice-p1">?</div>
