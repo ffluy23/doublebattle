@@ -446,9 +446,9 @@ function collectFaintedSlots(entries,data) {
   return ALL_FS.filter(s=>{
     const activeIdx=data[`${s}_active_idx`]??0
     const pkmn=entries[s][activeIdx]
-    // active 포켓몬이 기절이고 벤치에 살아있는 포켓몬이 있을 때만
-    const hasBench=entries[s].some((p,i)=>i!==activeIdx&&p.hp>0)
-    return pkmn&&pkmn.hp<=0&&hasBench
+    // active 포켓몬이 기절이면 무조건 포함 (벤치 유무 상관없이)
+    // 벤치도 없으면 openForcedSwitch에서 자동 스킵됨
+    return pkmn&&pkmn.hp<=0
   })
 }
 
@@ -534,8 +534,20 @@ function updateBenchButtons(data){
 function openForcedSwitch(data) {
   if(gameOver) return
   const myEntry=data[`${mySlot}_entry`]
-  const aliveIdxs=myEntry.map((p,i)=>i).filter(i=>myEntry[i].hp>0)
-  if(aliveIdxs.length===0){ forcedSwitchOpen=false; return }
+  const activeIdx=data[`${mySlot}_active_idx`]??0
+  const aliveIdxs=myEntry.map((p,i)=>i).filter(i=>i!==activeIdx&&myEntry[i].hp>0)
+
+  // 벤치에 살아있는 포켓몬 없음 → pending에서 내 슬롯 제거하고 자동 통과
+  if(aliveIdxs.length===0){
+    forcedSwitchOpen=false
+    const snap=getDoc(roomRef).then(s=>{
+      const fd=s.data()
+      if(!(fd.pending_switches??[]).includes(mySlot)) return
+      const newPending=(fd.pending_switches??[]).filter(s=>s!==mySlot)
+      updateDoc(roomRef,{pending_switches:newPending})
+    })
+    return
+  }
 
   const overlay=document.getElementById("target-overlay")
   const btnWrap=document.getElementById("target-buttons")
