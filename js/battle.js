@@ -211,22 +211,25 @@ function popDiceNum(el) {
 }
 
 // 4개 동시 다이스 (라운드 순서용)
-function animateAllDice(rolls,names) {
+function animateAllDice(rolls,names,slots=ALL_FS) {
   return new Promise(resolve=>{
     const wrap=document.getElementById("dice-wrap"); if(!wrap){resolve();return}
+    // 살아있는 슬롯만 표시, 나머지는 숨김
     ALL_FS.forEach(s=>{
-      const box=document.getElementById(`dice-box-${s}`); if(box) box.style.display="block"
-      const nameEl=document.getElementById(`${s}-name-dice`); if(nameEl) nameEl.innerText=names[s]??s
+      const box=document.getElementById(`dice-box-${s}`)
+      if(box) box.style.display=slots.includes(s)?"block":"none"
+      const nameEl=document.getElementById(`${s}-name-dice`)
+      if(nameEl&&slots.includes(s)) nameEl.innerText=names[s]??s
     })
     wrap.style.display="flex"
     let count=0
     const iv=setInterval(()=>{
-      ALL_FS.forEach(s=>{const el=document.getElementById(`dice-${s}`);if(el)el.innerText=rollD10()})
+      slots.forEach(s=>{const el=document.getElementById(`dice-${s}`);if(el)el.innerText=rollD10()})
       if(++count>=22){
         clearInterval(iv)
-        ALL_FS.forEach(s=>{const el=document.getElementById(`dice-${s}`);if(el)el.innerText=rolls[s]})
-        const maxScore=Math.max(...ALL_FS.map(s=>rolls[s]))
-        ALL_FS.forEach(s=>{if(rolls[s]===maxScore) popDiceNum(document.getElementById(`dice-${s}`))})
+        slots.forEach(s=>{const el=document.getElementById(`dice-${s}`);if(el)el.innerText=rolls[s]})
+        const maxScore=Math.max(...slots.map(s=>rolls[s]))
+        slots.forEach(s=>{if(rolls[s]===maxScore) popDiceNum(document.getElementById(`dice-${s}`))})
         playSound(SFX_DICE)
         setTimeout(()=>{wrap.style.display="none";resolve()},2000)
       }
@@ -327,12 +330,16 @@ function listenRoom() {
       if(pfx) triggerBlink(pfx)
     }
 
-    // dice 이벤트
+// 다이스 이벤트 수신 시
     if(data.dice_event&&data.dice_event.ts>lastDiceTs){
       lastDiceTs=data.dice_event.ts
       const names=getNamesMap(data)
-      if(data.dice_event.type==="all") animateAllDice(data.dice_event.rolls,names)
-      else animateDiceSingle(data.dice_event.slot,data.dice_event.roll,names)
+      if(data.dice_event.type==="all"){
+        const slots=data.dice_event.slots??ALL_FS
+        animateAllDice(data.dice_event.rolls,names,slots)
+      } else {
+        animateDiceSingle(data.dice_event.slot,data.dice_event.roll,names)
+      }
     }
 
     if(data.game_over){showGameOver(data);return}
@@ -417,22 +424,20 @@ async function startRound(data) {
       roundInit=false; return
     }
 
-    // 최신 entry 데이터 사용
+    // 엔트리에 살아있는 포켓몬이 있는 슬롯만 주사위 대상
+    const activeSlots=ALL_FS.filter(s=>fresh[`${s}_entry`]?.some(p=>p.hp>0))
+
     const rolls={},scores={}
-    ALL_FS.forEach(s=>{
+    activeSlots.forEach(s=>{
       const pkmn=fresh[`${s}_entry`]?.[fresh[`${s}_active_idx`]??0]
-      const alive=(pkmn?.hp??0)>0
-      const spd=alive?(pkmn?.speed??3):0
+      const spd=(pkmn?.hp??0)>0?(pkmn?.speed??3):0
       rolls[s]=rollD10(); scores[s]=spd+rolls[s]
     })
-    const order=ALL_FS.filter(s=>{
-      // 엔트리에 살아있는 포켓몬이 하나라도 있어야 순서에 포함
-      return fresh[`${s}_entry`]?.some(p=>p.hp>0)
-    }).sort((a,b)=>scores[b]-scores[a])
+    const order=[...activeSlots].sort((a,b)=>scores[b]-scores[a])
 
     const names=getNamesMap(fresh)
     const diceTs=Date.now()
-    await updateDoc(roomRef,{dice_event:{type:"all",rolls,ts:diceTs}})
+    await updateDoc(roomRef,{dice_event:{type:"all",rolls,slots:activeSlots,ts:diceTs}})
     await animateAllDice(rolls,names)
     await updateDoc(roomRef,{dice_event:null})
     await showRoundBanner(roundNum)
