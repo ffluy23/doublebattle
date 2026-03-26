@@ -359,7 +359,6 @@ function listenRoom() {
 
     // current_order 없음 = 라운드 시작 대기
     if(!data.current_order||data.current_order.length===0){
-      // pending_switches: 기절 슬롯들이 교체 대기 중
       const pending=data.pending_switches??[]
 
       // 내가 교체해야 하는 슬롯인지 확인
@@ -368,12 +367,14 @@ function listenRoom() {
         openForcedSwitch(data)
         return
       }
-      if(!isSpectator&&mySlot&&pending.includes(mySlot)) return  // 오버레이 이미 열려있음
+      if(!isSpectator&&mySlot&&pending.includes(mySlot)) return
 
       // 모든 교체 완료 후 p1이 라운드 시작
+      // roundInit은 startRound 완료 후 false로 리셋되므로
+      // 여기선 true로만 세팅 (중복 호출 방지)
       if(!isSpectator&&mySlot==="p1"&&pending.length===0&&!roundInit){
         roundInit=true
-        await startRound(data)
+        startRound(data)  // await 제거 — snapshot 블로킹 방지
       }
       return
     }
@@ -396,35 +397,49 @@ function getNamesMap(data){const m={};ALL_FS.forEach(s=>{m[s]=data[`${roomName(s
 // pending_switches 없음 확인 후 호출됨
 async function startRound(data) {
   try {
-    const roundNum=(data.round_count??0)+1
+    // 최신 Firestore 데이터로 다시 읽기 (snapshot의 data는 오래됐을 수 있음)
+    const freshSnap=await getDoc(roomRef)
+    const fresh=freshSnap.data()
 
-    // Firestore 레벨 락: round_count 먼저 올려서 중복 실행 방지
-    // 새로고침한 p1이 동시에 시도해도 한 쪽만 진행됨
-    await updateDoc(roomRef,{round_count:roundNum})
-    const check=await getDoc(roomRef)
-    if((check.data().round_count??0)!==roundNum){
-      roundInit=false; return  // 다른 클라이언트가 먼저 처리함
+    // 이미 다른 클라이언트가 current_order를 세팅했으면 중단
+    if(fresh.current_order&&fresh.current_order.length>0){
+      roundInit=false; return
     }
 
+    const currentRound=fresh.round_count??0
+    const roundNum=currentRound+1
+
+    // 락: round_count를 roundNum으로 올리기 시도
+    await updateDoc(roomRef,{round_count:roundNum})
+    // 확인: 내가 올린 게 맞는지 (동시 시도 시 한 쪽만 통과)
+    const check=await getDoc(roomRef)
+    if((check.data().round_count??0)!==roundNum){
+      roundInit=false; return
+    }
+
+    // 최신 entry 데이터 사용
     const rolls={},scores={}
     ALL_FS.forEach(s=>{
-      const pkmn=data[`${s}_entry`]?.[data[`${s}_active_idx`]??0]
+      const pkmn=fresh[`${s}_entry`]?.[fresh[`${s}_active_idx`]??0]
       const alive=(pkmn?.hp??0)>0
       const spd=alive?(pkmn?.speed??3):0
       rolls[s]=rollD10(); scores[s]=spd+rolls[s]
     })
     const order=ALL_FS.filter(s=>{
-      const pkmn=data[`${s}_entry`]?.[data[`${s}_active_idx`]??0]
+      const pkmn=fresh[`${s}_entry`]?.[fresh[`${s}_active_idx`]??0]
       return (pkmn?.hp??0)>0
     }).sort((a,b)=>scores[b]-scores[a])
 
+    const names=getNamesMap(fresh)
     const diceTs=Date.now()
     await updateDoc(roomRef,{dice_event:{type:"all",rolls,ts:diceTs}})
-    await animateAllDice(rolls,getNamesMap(data))
+    await animateAllDice(rolls,names)
     await updateDoc(roomRef,{dice_event:null})
     await showRoundBanner(roundNum)
-    await addLog(`── ROUND ${roundNum} 순서: ${order.map(s=>data[`${roomName(s)}_name`]??s).join(" → ")} ──`)
+    await addLog(`── ROUND ${roundNum} 순서: ${order.map(s=>fresh[`${roomName(s)}_name`]??s).join(" → ")} ──`)
     await updateDoc(roomRef,{current_order:order})
+    // 성공적으로 완료 후 roundInit 리셋 (다음 라운드 대비)
+    roundInit=false
   } catch(e) {
     console.error("startRound 실패, roundInit 해제:", e)
     roundInit=false
@@ -437,7 +452,7 @@ async function advanceTurn(entries,data) {
   order.shift()
   const turn_count=(data.turn_count??1)+1
   const eot=order.length===0
-  if(eot) roundInit=false
+  // roundInit 리셋은 여기서 하지 않음 → startRound 완료 후 처리
   return {current_order:order,turn_count,eot}
 }
 
