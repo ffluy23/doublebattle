@@ -12,8 +12,9 @@ import {
 import { moves } from "./moves.js"
 import { statusName, josa as josaEH } from "./effecthandler.js"
 
+
+const ROOM_ID = window.ROOM_ID
 const roomRef = doc(db, "double", ROOM_ID)
-const logsRef = collection(db, "double", ROOM_ID, "logs")
 const functions = getFunctions(app)
 // 서버 함수 연결
 const fnStartRound    = httpsCallable(functions, "startRound")
