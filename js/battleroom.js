@@ -164,12 +164,57 @@ function setupButtons(){
   const swapBtn=document.getElementById("swapBtn")
   if(swapBtn) swapBtn.onclick=async()=>{
     const roomSnap=await getDoc(roomRef),room=roomSnap.data()
+
     // 빈 슬롯 있으면 바로 승격
     for(const s of PLAYER_SLOTS){if(!room[`${s}_uid`]){await requestSwap(s);return}}
-    // 전부 찼으면 선택
-    const target=prompt("교체할 슬롯 입력 (player1~player4)")
-    if(PLAYER_SLOTS.includes(target)) await requestSwap(target)
+
+    // 전부 찼으면 버튼으로 선택
+    showSwapTargetUI(room)
   }
+}
+
+function showSwapTargetUI(room) {
+  // 기존 UI 있으면 제거
+  const existing=document.getElementById("swap-target-ui")
+  if(existing) existing.remove()
+
+  const wrap=document.createElement("div")
+  wrap.id="swap-target-ui"
+  wrap.style.cssText="margin-top:10px;display:flex;flex-direction:column;gap:8px;"
+
+  const label=document.createElement("p")
+  label.innerText="어느 자리로 가고 싶어?"
+  label.style.cssText="font-size:13px;color:#555;margin-bottom:2px;"
+  wrap.appendChild(label)
+
+  const btnRow=document.createElement("div")
+  btnRow.style.cssText="display:flex;gap:8px;flex-wrap:wrap;"
+
+  PLAYER_SLOTS.forEach(s=>{
+    const name=room[`${s}_name`]
+    if(!name) return  // 빈 슬롯은 이미 위에서 처리됨
+    const btn=document.createElement("button")
+    btn.innerText=`${s.replace("player","P")} (${name})`
+    btn.style.cssText="padding:7px 14px;background:#4a9eff;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer;"
+    btn.onclick=async()=>{
+      wrap.remove()
+      await requestSwap(s)
+    }
+    btnRow.appendChild(btn)
+  })
+
+  const cancelBtn=document.createElement("button")
+  cancelBtn.innerText="취소"
+  cancelBtn.style.cssText="padding:7px 14px;background:#bbb;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer;"
+  cancelBtn.onclick=()=>wrap.remove()
+  btnRow.appendChild(cancelBtn)
+
+  wrap.appendChild(btnRow)
+
+  // swap-request-display 밑에 삽입
+  const anchor=document.getElementById("swap-request-display")
+  if(anchor) anchor.after(wrap)
+  else document.querySelector(".room-container")?.appendChild(wrap)
 }
 
 async function leaveRoom(mySlot,room){
