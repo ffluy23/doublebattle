@@ -17,7 +17,6 @@ const ROOM_ID = window.ROOM_ID
 const roomRef = doc(db, "double", ROOM_ID)
 const logsRef = collection(db, "double", ROOM_ID, "logs")
 const functions = getFunctions(app, "us-central1")
-// 서버 함수 연결
 const fnStartRound    = httpsCallable(functions, "startRound")
 const fnUseMove       = httpsCallable(functions, "useMove")
 const fnSwitchPokemon = httpsCallable(functions, "switchPokemon")
@@ -73,7 +72,7 @@ function triggerAttackEffect(atkPfx, defPfx) {
   return new Promise(resolve=>{
     const atkArea=document.getElementById(`${atkPfx}-pokemon-area`)
     const defArea=document.getElementById(`${defPfx}-pokemon-area`)
-    const wrapper=document.getElementById("main")
+    const wrapper=document.body
     if(atkArea){ atkArea.classList.add("attacker-flash"); atkArea.addEventListener("animationend",()=>atkArea.classList.remove("attacker-flash"),{once:true}) }
     if(wrapper){ wrapper.classList.add("screen-shake"); wrapper.addEventListener("animationend",()=>wrapper.classList.remove("screen-shake"),{once:true}) }
     setTimeout(()=>{
@@ -118,12 +117,13 @@ function processQueue() {
   }
   typeNext()
 }
-function listenLogs() {
+function listenLogs(sinceTs) {
   clearLogState()
   const q=query(logsRef,orderBy("ts"))
   onSnapshot(q,snap=>{
     snap.docs.forEach(d=>{
       if(renderedLogIds.has(d.id)) return
+      if(d.data().ts < sinceTs) return  // 이전 게임 로그 무시
       renderedLogIds.add(d.id)
       typingQueue.push({text:d.data().text,resolve:null})
     })
@@ -195,6 +195,7 @@ onAuthStateChanged(auth, async user=>{
   if(!user) return
   myUid=user.uid
   const roomSnap=await getDoc(roomRef), room=roomSnap.data()
+  const gameStartTs = Date.now()  // 이 시점 이후 로그만 표시
 
   if(isSpectator){
     mySlot=null
@@ -205,7 +206,7 @@ onAuthStateChanged(auth, async user=>{
     window.__myDisplayName=room[`${roomName(mySlot)}_name`]??myUid.slice(0,6)
   }
 
-  listenLogs()
+  listenLogs(gameStartTs)
   listenRoom()
   initChat()
 })
@@ -221,7 +222,6 @@ function listenRoom() {
 
     if(!data.p1_entry||!data.p2_entry||!data.p3_entry||!data.p4_entry) return
 
-    // UI 업데이트
     if(isSpectator){
       updateActiveUI("p1",data,"my"); updateActiveUI("p2",data,"ally")
       updateActiveUI("p3",data,"enemy1"); updateActiveUI("p4",data,"enemy2")
@@ -234,7 +234,6 @@ function listenRoom() {
       setPlayerTags(data,mySlot,ally,en1,en2)
     }
 
-    // hit 이벤트
     if(data.hit_event&&data.hit_event.ts>lastHitTs){
       lastHitTs=data.hit_event.ts
       const def=data.hit_event.defender
@@ -242,7 +241,6 @@ function listenRoom() {
       if(pfx) triggerBlink(pfx)
     }
 
-    // 다이스 이벤트
     if(data.dice_event&&data.dice_event.ts>lastDiceTs){
       lastDiceTs=data.dice_event.ts
       const names=getNamesMap(data)
@@ -255,7 +253,6 @@ function listenRoom() {
 
     if(data.game_over){ showGameOver(data); return }
 
-    // 첫 스냅샷 복구
     if(isFirstSnapshot){
       isFirstSnapshot=false
       if(!isSpectator&&mySlot){
@@ -265,11 +262,9 @@ function listenRoom() {
       }
     }
 
-    // current_order 없음 = 라운드 시작 대기
     if(!data.current_order||data.current_order.length===0){
       const pending=data.pending_switches??[]
 
-      // 강제 교체 대기 중
       if(!isSpectator&&mySlot&&pending.includes(mySlot)&&!forcedSwitchOpen){
         forcedSwitchOpen=true
         openForcedSwitch(data)
@@ -277,7 +272,6 @@ function listenRoom() {
       }
       if(!isSpectator&&mySlot&&pending.includes(mySlot)) return
 
-      // 모든 교체 완료 → p1이 라운드 시작 (서버 호출)
       if(!isSpectator&&mySlot==="p1"&&pending.length===0){
         console.log("startRound 호출 시도!", {mySlot, pending, current_order: data.current_order})
         callStartRound(data)
