@@ -388,14 +388,42 @@ function listenRoom() {
 
     if(!isSpectator&&mySlot){
       const nowMyTurn=data.current_order[0]===mySlot
-      // 내 턴이 새로 됐을 때만 actionDone 리셋 (새로고침 시엔 isFirstSnapshot에서 이미 처리)
       if(!myTurn&&nowMyTurn) actionDone=false
       myTurn=nowMyTurn
+
+      // 내 턴인데 엔트리 전멸 → 자동으로 턴 넘기기
+      if(myTurn&&!actionDone){
+        const myEntry=data[`${mySlot}_entry`]??[]
+        const allDead=myEntry.every(p=>p.hp<=0)
+        if(allDead){
+          actionDone=true
+          skipTurn(data)
+          return
+        }
+      }
     }
     updateTurnUI(data)
     updateBenchButtons(data)
     updateMoveButtons(data)
   })
+}
+
+// 엔트리 전멸 시 자동 턴 스킵
+async function skipTurn(data) {
+  const snap=await getDoc(roomRef),fd=snap.data()
+  // 이미 턴이 넘어갔으면 무시
+  if(!fd.current_order||fd.current_order[0]!==mySlot){actionDone=false;return}
+  const entries=deepCopyEntries(fd)
+  const {current_order,turn_count,eot}=await advanceTurn(entries,fd)
+  const update={...buildEntryUpdate(entries),current_order,turn_count}
+  if(eot){
+    const {msgs}=applyEndOfTurnDamage([entries.p1,entries.p2,entries.p3,entries.p4])
+    for(const m of msgs){await addLog(m);await wait(280)}
+    Object.assign(update,buildEntryUpdate(entries))
+    const w=checkWin(entries);if(w){await handleWin(w,fd,update);return}
+    update.pending_switches=collectFaintedSlots(entries,fd)
+  }
+  await updateDoc(roomRef,update)
 }
 
 function getNamesMap(data){const m={};ALL_FS.forEach(s=>{m[s]=data[`${roomName(s)}_name`]??s});return m}
