@@ -317,7 +317,20 @@ function listenRoom() {
 
     // current_order 없음 = 라운드 시작 대기
     if(!data.current_order||data.current_order.length===0){
-      if(!isSpectator&&mySlot==="p1"&&!roundInit){
+      // pending_switches: 기절 슬롯들이 교체 대기 중
+      const pending=data.pending_switches??[]
+
+      // 내가 교체해야 하는 슬롯인지 확인
+      if(!isSpectator&&mySlot&&pending.includes(mySlot)){
+        const snap2=await getDoc(roomRef)
+        const d2=snap2.data()
+        const stillPending=(d2.pending_switches??[]).includes(mySlot)
+        if(stillPending) openForcedSwitch(data)
+        return
+      }
+
+      // 모든 교체 완료 후 p1이 라운드 시작
+      if(!isSpectator&&mySlot==="p1"&&pending.length===0&&!roundInit){
         roundInit=true
         await startRound(data)
       }
@@ -329,15 +342,6 @@ function listenRoom() {
       myTurn=data.current_order[0]===mySlot
       if(!wasMine&&myTurn) actionDone=false
       updateTurnUI(data)
-
-      // 내 턴인데 active 포켓몬이 기절 → 강제 교체
-      if(myTurn&&!actionDone){
-        const myActive=data[`${mySlot}_entry`]?.[data[`${mySlot}_active_idx`]??0]
-        if(myActive&&myActive.hp<=0){
-          openForcedSwitch(data)
-          return
-        }
-      }
     }
     updateBenchButtons(data)
     updateMoveButtons(data)
@@ -347,16 +351,21 @@ function listenRoom() {
 function getNamesMap(data){const m={};ALL_FS.forEach(s=>{m[s]=data[`${roomName(s)}_name`]??s});return m}
 
 // ── 라운드 시작 ───────────────────────────────────
+// pending_switches 없음 확인 후 호출됨
 async function startRound(data) {
   const roundNum=(data.round_count??0)+1
   const rolls={},scores={}
   ALL_FS.forEach(s=>{
     const pkmn=data[`${s}_entry`]?.[data[`${s}_active_idx`]??0]
-    // 기절이어도 순서에 포함 (턴이 오면 강제 교체)
-    const spd=pkmn?.speed??3
+    // 기절 슬롯은 순서 제외 (이미 교체 완료된 상태)
+    const alive=(pkmn?.hp??0)>0
+    const spd=alive?(pkmn?.speed??3):0
     rolls[s]=rollD10(); scores[s]=spd+rolls[s]
   })
-  const order=[...ALL_FS].sort((a,b)=>scores[b]-scores[a])
+  const order=ALL_FS.filter(s=>{
+    const pkmn=data[`${s}_entry`]?.[data[`${s}_active_idx`]??0]
+    return (pkmn?.hp??0)>0
+  }).sort((a,b)=>scores[b]-scores[a])
 
   const diceTs=Date.now()
   await updateDoc(roomRef,{dice_event:{type:"all",rolls,ts:diceTs},round_count:roundNum})
@@ -368,8 +377,6 @@ async function startRound(data) {
 }
 
 // ── 턴 진행 ───────────────────────────────────────
-// current_order 맨 앞 제거
-// eot=true면 라운드 끝 → EOT 처리 후 roundInit=false
 async function advanceTurn(entries,data) {
   const order=[...data.current_order]
   order.shift()
@@ -377,6 +384,17 @@ async function advanceTurn(entries,data) {
   const eot=order.length===0
   if(eot) roundInit=false
   return {current_order:order,turn_count,eot}
+}
+
+// 라운드 끝날 때 기절 슬롯 수집 → pending_switches
+function collectFaintedSlots(entries,data) {
+  return ALL_FS.filter(s=>{
+    const activeIdx=data[`${s}_active_idx`]??0
+    const pkmn=entries[s][activeIdx]
+    // active 포켓몬이 기절이고 벤치에 살아있는 포켓몬이 있을 때만
+    const hasBench=entries[s].some((p,i)=>i!==activeIdx&&p.hp>0)
+    return pkmn&&pkmn.hp<=0&&hasBench
+  })
 }
 
 // ── 게임 오버 ─────────────────────────────────────
@@ -397,7 +415,7 @@ async function leaveAsSpectator(){
 }
 async function leaveGame(){
   const logSnap=await getDocs(logsRef); await Promise.all(logSnap.docs.map(d=>deleteDoc(d.ref)))
-  const reset={game_started:false,game_over:false,winner_team:null,current_order:[],turn_count:0,round_count:0,dice_event:null,hit_event:null,background:null}
+  const reset={game_started:false,game_over:false,winner_team:null,current_order:[],turn_count:0,round_count:0,dice_event:null,hit_event:null,background:null,pending_switches:[]}
   ALL_FS.forEach(s=>{const rs=roomName(s);reset[`${rs}_uid`]=null;reset[`${rs}_name`]=null;reset[`${rs}_ready`]=false;reset[`${s}_entry`]=null;reset[`${s}_active_idx`]=0})
   reset.spectators=[];reset.spectator_names=[]
   await updateDoc(roomRef,reset); location.href="../main.html"
@@ -488,12 +506,14 @@ function openForcedSwitch(data) {
   overlay.classList.add("show")
 }
 
-// 강제 교체 실행 (턴 소모 없이 idx만 변경 후 advanceTurn)
+// 강제 교체 실행 — pending_switches에서 내 슬롯 제거 (턴 소모 없음)
 async function forcedSwitch(newIdx, data) {
-  if(actionDone||gameOver) return
-  actionDone=true
+  if(gameOver) return
 
   const snap=await getDoc(roomRef), fd=snap.data()
+  // 이미 처리됐으면 무시
+  if(!(fd.pending_switches??[]).includes(mySlot)) return
+
   const entries=deepCopyEntries(fd)
   const myName=fd[`${roomName(mySlot)}_name`]
   const next=entries[mySlot][newIdx].name
@@ -503,18 +523,16 @@ async function forcedSwitch(newIdx, data) {
   // 취소 버튼 복원
   const cancelBtn=document.getElementById("target-cancel-btn")
   if(cancelBtn) cancelBtn.style.display=""
+  const title=document.querySelector("#target-overlay h3")
+  if(title) title.innerText="누구에게 사용할까?"
 
-  // 턴은 정상 소모 (advanceTurn)
-  const {current_order,turn_count,eot}=await advanceTurn(entries,fd)
-  const update={...buildEntryUpdate(entries),[`${mySlot}_active_idx`]:newIdx,current_order,turn_count}
-
-  if(eot){
-    const {msgs,anyFainted}=applyEndOfTurnDamage([entries.p1,entries.p2,entries.p3,entries.p4])
-    for(const m of msgs){await addLog(m);await wait(280)}
-    Object.assign(update,buildEntryUpdate(entries))
-    const w=checkWin(entries); if(w){await handleWin(w,fd,update);return}
-  }
-  await updateDoc(roomRef,update)
+  const newPending=(fd.pending_switches??[]).filter(s=>s!==mySlot)
+  await updateDoc(roomRef,{
+    ...buildEntryUpdate(entries),
+    [`${mySlot}_active_idx`]: newIdx,
+    pending_switches: newPending
+  })
+  // pending_switches가 비면 listenRoom에서 p1이 startRound 호출
 }
 
 // ── 타겟 선택 오버레이 ───────────────────────────
@@ -586,10 +604,12 @@ async function switchPokemon(newIdx){
   entries[mySlot][newIdx]  // 교체 후 hp 체크는 실제 index 업데이트 후
   const update={...buildEntryUpdate(entries),[`${mySlot}_active_idx`]:newIdx,current_order,turn_count}
   if(eot){
-    const {msgs,anyFainted}=applyEndOfTurnDamage([entries.p1,entries.p2,entries.p3,entries.p4])
+    const {msgs}=applyEndOfTurnDamage([entries.p1,entries.p2,entries.p3,entries.p4])
     for(const m of msgs){await addLog(m);await wait(280)}
     Object.assign(update,buildEntryUpdate(entries))
     const w=checkWin(entries); if(w){await handleWin(w,data,update);return}
+    const pending=collectFaintedSlots(entries,data)
+    update.pending_switches=pending
   }
   await updateDoc(roomRef,update)
 }
@@ -615,7 +635,7 @@ async function useMove(moveIdx,data,targetSlots){
   if(pre.blocked){
     const {current_order,turn_count,eot}=await advanceTurn(entries,fd)
     const update={...buildEntryUpdate(entries),current_order,turn_count}
-    if(eot){const {msgs,anyFainted}=applyEndOfTurnDamage([entries.p1,entries.p2,entries.p3,entries.p4]);for(const m of msgs){await addLog(m);await wait(280)};Object.assign(update,buildEntryUpdate(entries));const w=checkWin(entries);if(w){await handleWin(w,fd,update);return}}
+    if(eot){const {msgs}=applyEndOfTurnDamage([entries.p1,entries.p2,entries.p3,entries.p4]);for(const m of msgs){await addLog(m);await wait(280)};Object.assign(update,buildEntryUpdate(entries));const w=checkWin(entries);if(w){await handleWin(w,fd,update);return};update.pending_switches=collectFaintedSlots(entries,fd)}
     await updateDoc(roomRef,update); return
   }
 
@@ -625,7 +645,7 @@ async function useMove(moveIdx,data,targetSlots){
   if(conf.selfHit){
     const {current_order,turn_count,eot}=await advanceTurn(entries,fd)
     const update={...buildEntryUpdate(entries),current_order,turn_count}
-    if(eot){const {msgs,anyFainted}=applyEndOfTurnDamage([entries.p1,entries.p2,entries.p3,entries.p4]);for(const m of msgs){await addLog(m);await wait(280)};Object.assign(update,buildEntryUpdate(entries));const w=checkWin(entries);if(w){await handleWin(w,fd,update);return}}
+    if(eot){const {msgs}=applyEndOfTurnDamage([entries.p1,entries.p2,entries.p3,entries.p4]);for(const m of msgs){await addLog(m);await wait(280)};Object.assign(update,buildEntryUpdate(entries));const w=checkWin(entries);if(w){await handleWin(w,fd,update);return};update.pending_switches=collectFaintedSlots(entries,fd)}
     await updateDoc(roomRef,update); return
   }
 
@@ -694,10 +714,13 @@ async function useMove(moveIdx,data,targetSlots){
   const update={...buildEntryUpdate(entries),current_order,turn_count}
 
   if(eot&&!winNow){
-    const {msgs:eotMsgs,anyFainted}=applyEndOfTurnDamage([entries.p1,entries.p2,entries.p3,entries.p4])
+    const {msgs:eotMsgs}=applyEndOfTurnDamage([entries.p1,entries.p2,entries.p3,entries.p4])
     for(const msg of eotMsgs){await addLog(msg);await wait(280)}
     Object.assign(update,buildEntryUpdate(entries))
     const w=checkWin(entries); if(w){await handleWin(w,fd,update);return}
+    // 기절 슬롯 pending_switches 세팅
+    const pending=collectFaintedSlots(entries,fd)
+    update.pending_switches=pending
   }
 
   if(winNow){await handleWin(winNow,fd,update);return}
