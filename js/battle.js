@@ -329,6 +329,15 @@ function listenRoom() {
       myTurn=data.current_order[0]===mySlot
       if(!wasMine&&myTurn) actionDone=false
       updateTurnUI(data)
+
+      // 내 턴인데 active 포켓몬이 기절 → 강제 교체
+      if(myTurn&&!actionDone){
+        const myActive=data[`${mySlot}_entry`]?.[data[`${mySlot}_active_idx`]??0]
+        if(myActive&&myActive.hp<=0){
+          openForcedSwitch(data)
+          return
+        }
+      }
     }
     updateBenchButtons(data)
     updateMoveButtons(data)
@@ -343,14 +352,11 @@ async function startRound(data) {
   const rolls={},scores={}
   ALL_FS.forEach(s=>{
     const pkmn=data[`${s}_entry`]?.[data[`${s}_active_idx`]??0]
-    const spd=(pkmn?.hp??0)>0?(pkmn?.speed??3):0
+    // 기절이어도 순서에 포함 (턴이 오면 강제 교체)
+    const spd=pkmn?.speed??3
     rolls[s]=rollD10(); scores[s]=spd+rolls[s]
   })
-  // 기절 슬롯은 순서에서 제외
-  const order=ALL_FS.filter(s=>{
-    const pkmn=data[`${s}_entry`]?.[data[`${s}_active_idx`]??0]
-    return (pkmn?.hp??0)>0
-  }).sort((a,b)=>scores[b]-scores[a])
+  const order=[...ALL_FS].sort((a,b)=>scores[b]-scores[a])
 
   const diceTs=Date.now()
   await updateDoc(roomRef,{dice_event:{type:"all",rolls,ts:diceTs},round_count:roundNum})
@@ -362,18 +368,11 @@ async function startRound(data) {
 }
 
 // ── 턴 진행 ───────────────────────────────────────
-// current_order 맨 앞 제거, 기절 포켓몬 건너뜀
+// current_order 맨 앞 제거
 // eot=true면 라운드 끝 → EOT 처리 후 roundInit=false
 async function advanceTurn(entries,data) {
   const order=[...data.current_order]
   order.shift()
-  // 기절 건너뜀
-  while(order.length>0){
-    const next=order[0]
-    const pkmn=entries[next]?.[data[`${next}_active_idx`]??0]
-    if(pkmn&&pkmn.hp>0) break
-    order.shift()
-  }
   const turn_count=(data.turn_count??1)+1
   const eot=order.length===0
   if(eot) roundInit=false
@@ -449,6 +448,73 @@ function updateBenchButtons(data){
     else{btn.innerHTML=`<span class="bench-name">${pkmn.name}</span><span class="bench-hp">HP: ${pkmn.hp}/${pkmn.maxHp}</span>`;btn.disabled=!myTurn||actionDone;btn.onclick=()=>{playSound(SFX_BTN);switchPokemon(idx)}}
     bench.appendChild(btn)
   })
+}
+
+// ── 강제 교체 (active 기절 시) ──────────────────────
+function openForcedSwitch(data) {
+  if(actionDone||gameOver) return
+  const myEntry=data[`${mySlot}_entry`]
+  const aliveIdxs=myEntry.map((p,i)=>i).filter(i=>myEntry[i].hp>0)
+
+  // 살아있는 포켓몬이 없으면 팀 전멸 → checkWin이 처리할 것
+  if(aliveIdxs.length===0) return
+
+  const overlay=document.getElementById("target-overlay")
+  const btnWrap=document.getElementById("target-buttons")
+  if(!overlay||!btnWrap) return
+  btnWrap.innerHTML=""
+
+  const title=overlay.querySelector("h3")
+  if(title) title.innerText="포켓몬을 내보내!"
+
+  aliveIdxs.forEach(idx=>{
+    const p=myEntry[idx]
+    const btn=document.createElement("button")
+    btn.className="target-btn"
+    btn.style.background="#4a9eff"
+    btn.innerText=`${p.name}  HP: ${p.hp}/${p.maxHp}`
+    btn.onclick=async()=>{
+      overlay.classList.remove("show")
+      if(title) title.innerText="누구에게 사용할까?"
+      await forcedSwitch(idx, data)
+    }
+    btnWrap.appendChild(btn)
+  })
+
+  // 취소 없음 (강제 교체는 취소 불가)
+  const cancelBtn=document.getElementById("target-cancel-btn")
+  if(cancelBtn) cancelBtn.style.display="none"
+
+  overlay.classList.add("show")
+}
+
+// 강제 교체 실행 (턴 소모 없이 idx만 변경 후 advanceTurn)
+async function forcedSwitch(newIdx, data) {
+  if(actionDone||gameOver) return
+  actionDone=true
+
+  const snap=await getDoc(roomRef), fd=snap.data()
+  const entries=deepCopyEntries(fd)
+  const myName=fd[`${roomName(mySlot)}_name`]
+  const next=entries[mySlot][newIdx].name
+
+  await addLog(`${myName}${josa(myName,"은는")} ${next}${josa(next,"을를")} 내보냈다!`)
+
+  // 취소 버튼 복원
+  const cancelBtn=document.getElementById("target-cancel-btn")
+  if(cancelBtn) cancelBtn.style.display=""
+
+  // 턴은 정상 소모 (advanceTurn)
+  const {current_order,turn_count,eot}=await advanceTurn(entries,fd)
+  const update={...buildEntryUpdate(entries),[`${mySlot}_active_idx`]:newIdx,current_order,turn_count}
+
+  if(eot){
+    const {msgs,anyFainted}=applyEndOfTurnDamage([entries.p1,entries.p2,entries.p3,entries.p4])
+    for(const m of msgs){await addLog(m);await wait(280)}
+    Object.assign(update,buildEntryUpdate(entries))
+    const w=checkWin(entries); if(w){await handleWin(w,fd,update);return}
+  }
+  await updateDoc(roomRef,update)
 }
 
 // ── 타겟 선택 오버레이 ───────────────────────────
