@@ -41,7 +41,6 @@
     #main {
       flex: 1;
       display: grid;
-      /* 왼쪽: 전장 | 오른쪽: 로그+채팅 */
       grid-template-columns: 1fr 300px;
       overflow: hidden;
       min-height: 0;
@@ -55,7 +54,6 @@
       min-height: 0;
     }
 
-    /* 포켓몬 필드: 상대팀(위) + 내팀(아래) */
     #field {
       flex: 1;
       display: grid;
@@ -72,7 +70,6 @@
       gap: 6px;
     }
 
-    /* 포켓몬 카드 */
     .pokemon-area {
       background: #ffffff;
       border: 1px solid #dde3ec;
@@ -142,7 +139,6 @@
       gap: 6px;
     }
 
-    /* 기술 버튼 */
     #move-buttons {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -163,7 +159,6 @@
     .move-btn:disabled { opacity: 0.4; cursor: not-allowed; }
     .move-btn:not(:disabled):hover { filter: brightness(1.15); }
 
-    /* 교체(벤치) 버튼 */
     #bench-container {
       display: flex;
       gap: 5px;
@@ -181,7 +176,6 @@
     }
     #bench-container button:disabled { opacity: 0.4; cursor: not-allowed; }
 
-    /* 타겟 선택 오버레이 */
     #target-overlay {
       display: none;
       position: fixed;
@@ -211,7 +205,6 @@
     .target-btn:hover { filter: brightness(1.15); }
     .target-btn.cancel { background: #999; font-size: 13px; padding: 8px 20px; }
 
-    /* ── 우측 패널 ── */
     #right-panel {
       display: flex;
       flex-direction: column;
@@ -220,7 +213,6 @@
       min-height: 0;
     }
 
-    /* 배틀 로그 */
     #battle-log-wrap {
       flex: 1;
       overflow-y: auto;
@@ -235,7 +227,6 @@
       line-height: 1.5;
     }
 
-    /* 채팅 */
     #chat-wrap {
       flex-shrink: 0;
       border-top: 1px solid #dde3ec;
@@ -282,10 +273,8 @@
       cursor: pointer;
     }
 
-    /* 관전자 목록 */
     #spectator-list { font-size: 11px; color: #666; padding: 4px 8px; flex-shrink: 0; }
 
-    /* 나가기 버튼 */
     #leaveBtn {
       display: none;
       padding: 6px 16px;
@@ -330,7 +319,6 @@
     .blink-damage   { animation: blinkDamage  0.5s ease; }
     .screen-shake   { animation: screenShake  0.35s ease; }
 
-    /* 팝업(급소/회피) */
     .battle-popup {
       position: absolute;
       top: 50%; left: 50%;
@@ -356,7 +344,6 @@
       100% { transform: translate(-50%,-90%) scale(0.9); opacity: 0; }
     }
 
-    /* 다이스 */
     #dice-wrap {
       display: none;
       flex-direction: row;
@@ -378,7 +365,6 @@
     }
     .dice-num.pop { animation: pop 0.1s ease-out; }
 
-    /* 라운드 알림 */
     #round-banner {
       display: none;
       position: fixed;
@@ -396,7 +382,6 @@
       letter-spacing: 3px;
     }
 
-    /* 반응형 */
     @media (max-width: 640px) {
       #main { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
       #right-panel { border-left: none; border-top: 1px solid #dde3ec; height: 220px; }
@@ -407,7 +392,6 @@
 </head>
 <body>
 
-<!-- 헤더 -->
 <div id="header">
   <div class="name-group">
     🔵 <span id="p1-name">???</span> &amp; <span id="p2-name">???</span>
@@ -421,14 +405,11 @@
   </div>
 </div>
 
-<!-- 메인 -->
-<div id="main" id="battle-wrapper">
+<div id="main">
 
-  <!-- 전장 -->
   <div id="battle-area">
 
     <div id="field">
-      <!-- 상대 팀 (위) -->
       <div class="team-field">
         <div class="pokemon-area enemy-card" id="enemy1-pokemon-area">
           <div class="pkmn-header">
@@ -458,7 +439,6 @@
         </div>
       </div>
 
-      <!-- 내 팀 (아래) -->
       <div class="team-field">
         <div class="pokemon-area ally-card" id="my-pokemon-area">
           <div class="pkmn-header">
@@ -489,7 +469,6 @@
       </div>
     </div>
 
-    <!-- 액션 영역 -->
     <div id="action-area">
       <div id="move-buttons">
         <button class="move-btn" id="move-btn-0"></button>
@@ -500,9 +479,8 @@
       <div id="bench-container"></div>
     </div>
 
-  </div><!-- /battle-area -->
+  </div>
 
-  <!-- 우측 패널 -->
   <div id="right-panel">
     <div id="spectator-list"></div>
     <button id="leaveBtn">방 나가기</button>
@@ -519,16 +497,14 @@
     </div>
   </div>
 
-</div><!-- /main -->
+</div>
 
-<!-- 타겟 선택 오버레이 -->
 <div id="target-overlay">
   <h3>누구에게 사용할까?</h3>
   <div id="target-buttons"></div>
   <button class="target-btn cancel" id="target-cancel-btn">취소</button>
 </div>
 
-<!-- 다이스 -->
 <div id="dice-wrap" style="display:none; position:fixed; inset:0; z-index:300; background:rgba(0,0,0,0.55); flex-direction:row; align-items:center; justify-content:center; gap:32px; flex-wrap:wrap;">
   <div class="dice-box" id="dice-box-p1">
     <span class="dice-name" id="p1-name-dice">P1</span>
@@ -548,7 +524,6 @@
   </div>
 </div>
 
-<!-- 라운드 배너 -->
 <div id="round-banner">
   <div id="round-banner-text"></div>
 </div>
