@@ -72,7 +72,7 @@ function triggerAttackEffect(atkPfx, defPfx) {
   return new Promise(resolve=>{
     const atkArea=document.getElementById(`${atkPfx}-pokemon-area`)
     const defArea=document.getElementById(`${defPfx}-pokemon-area`)
-    const wrapper=document.body
+    const wrapper = document.getElementById("battle-area")
     if(atkArea){ atkArea.classList.add("attacker-flash"); atkArea.addEventListener("animationend",()=>atkArea.classList.remove("attacker-flash"),{once:true}) }
     if(wrapper){ wrapper.classList.add("screen-shake"); wrapper.addEventListener("animationend",()=>wrapper.classList.remove("screen-shake"),{once:true}) }
     setTimeout(()=>{
