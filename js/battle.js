@@ -426,8 +426,8 @@ async function startRound(data) {
       rolls[s]=rollD10(); scores[s]=spd+rolls[s]
     })
     const order=ALL_FS.filter(s=>{
-      const pkmn=fresh[`${s}_entry`]?.[fresh[`${s}_active_idx`]??0]
-      return (pkmn?.hp??0)>0
+      // 엔트리에 살아있는 포켓몬이 하나라도 있어야 순서에 포함
+      return fresh[`${s}_entry`]?.some(p=>p.hp>0)
     }).sort((a,b)=>scores[b]-scores[a])
 
     const names=getNamesMap(fresh)
@@ -461,9 +461,10 @@ function collectFaintedSlots(entries,data) {
   return ALL_FS.filter(s=>{
     const activeIdx=data[`${s}_active_idx`]??0
     const pkmn=entries[s][activeIdx]
-    // active 포켓몬이 기절이면 무조건 포함 (벤치 유무 상관없이)
-    // 벤치도 없으면 openForcedSwitch에서 자동 스킵됨
-    return pkmn&&pkmn.hp<=0
+    if(!pkmn||pkmn.hp>0) return false  // 기절 아님
+    // 엔트리 전체가 기절이면 pending 불필요 (순서에서 그냥 제외)
+    const hasAnyAlive=entries[s].some(p=>p.hp>0)
+    return hasAnyAlive  // 살아있는 포켓몬이 있을 때만 교체 대기
   })
 }
 
@@ -814,8 +815,10 @@ async function useMove(moveIdx,data,targetSlots){
 
 // ── 승리 체크 / 처리 ─────────────────────────────
 function checkWin(entries){
-  if(isAllFainted(entries.p1)&&isAllFainted(entries.p2)) return "B"
-  if(isAllFainted(entries.p3)&&isAllFainted(entries.p4)) return "A"
+  const teamAAllDead=entries.p1.every(p=>p.hp<=0)&&entries.p2.every(p=>p.hp<=0)
+  const teamBAllDead=entries.p3.every(p=>p.hp<=0)&&entries.p4.every(p=>p.hp<=0)
+  if(teamAAllDead) return "B"
+  if(teamBAllDead) return "A"
   return null
 }
 async function handleWin(winTeam,data,partialUpdate){
