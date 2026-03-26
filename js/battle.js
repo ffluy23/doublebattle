@@ -276,9 +276,10 @@ function listenRoom() {
       if(!isSpectator&&mySlot&&pending.includes(mySlot)) return
 
       // 모든 교체 완료 → p1이 라운드 시작 (서버 호출)
-      if(!isSpectator&&mySlot==="p1"&&pending.length===0){
-        callStartRound(data)
-      }
+if(!isSpectator&&mySlot==="p1"&&pending.length===0){
+  console.log("startRound 호출 시도!", {mySlot, pending, current_order: data.current_order})
+  callStartRound(data)
+}
       return
     }
 
