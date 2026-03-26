@@ -52,6 +52,7 @@ let actionDone = false
 let gameOver   = false
 let lastHitTs  = 0
 let lastDiceTs = 0
+let forcedSwitchOpen = false  // 강제 교체 오버레이 중복 방지
 
 const isSpectator = new URLSearchParams(location.search).get("spectator")==="true"
 
@@ -164,6 +165,15 @@ function showBattlePopup(prefix,type) {
 
 // ── 로그 ─────────────────────────────────────────
 let renderedLogIds=new Set(),typingQueue=[],isTyping=false
+
+function clearLogState() {
+  renderedLogIds=new Set()
+  typingQueue=[]
+  isTyping=false
+  const log=document.getElementById("battle-log")
+  if(log) log.innerHTML=""
+}
+
 function processQueue() {
   if(isTyping||typingQueue.length===0) return
   isTyping=true
@@ -180,6 +190,7 @@ function processQueue() {
 }
 async function addLog(text) { await addDoc(logsRef,{text,ts:Date.now()}) }
 function listenLogs() {
+  clearLogState()
   const q=query(logsRef,orderBy("ts"))
   onSnapshot(q,snap=>{
     snap.docs.forEach(d=>{
@@ -321,13 +332,12 @@ function listenRoom() {
       const pending=data.pending_switches??[]
 
       // 내가 교체해야 하는 슬롯인지 확인
-      if(!isSpectator&&mySlot&&pending.includes(mySlot)){
-        const snap2=await getDoc(roomRef)
-        const d2=snap2.data()
-        const stillPending=(d2.pending_switches??[]).includes(mySlot)
-        if(stillPending) openForcedSwitch(data)
+      if(!isSpectator&&mySlot&&pending.includes(mySlot)&&!forcedSwitchOpen){
+        forcedSwitchOpen=true
+        openForcedSwitch(data)
         return
       }
+      if(!isSpectator&&mySlot&&pending.includes(mySlot)) return  // 오버레이 이미 열려있음
 
       // 모든 교체 완료 후 p1이 라운드 시작
       if(!isSpectator&&mySlot==="p1"&&pending.length===0&&!roundInit){
@@ -353,27 +363,31 @@ function getNamesMap(data){const m={};ALL_FS.forEach(s=>{m[s]=data[`${roomName(s
 // ── 라운드 시작 ───────────────────────────────────
 // pending_switches 없음 확인 후 호출됨
 async function startRound(data) {
-  const roundNum=(data.round_count??0)+1
-  const rolls={},scores={}
-  ALL_FS.forEach(s=>{
-    const pkmn=data[`${s}_entry`]?.[data[`${s}_active_idx`]??0]
-    // 기절 슬롯은 순서 제외 (이미 교체 완료된 상태)
-    const alive=(pkmn?.hp??0)>0
-    const spd=alive?(pkmn?.speed??3):0
-    rolls[s]=rollD10(); scores[s]=spd+rolls[s]
-  })
-  const order=ALL_FS.filter(s=>{
-    const pkmn=data[`${s}_entry`]?.[data[`${s}_active_idx`]??0]
-    return (pkmn?.hp??0)>0
-  }).sort((a,b)=>scores[b]-scores[a])
+  try {
+    const roundNum=(data.round_count??0)+1
+    const rolls={},scores={}
+    ALL_FS.forEach(s=>{
+      const pkmn=data[`${s}_entry`]?.[data[`${s}_active_idx`]??0]
+      const alive=(pkmn?.hp??0)>0
+      const spd=alive?(pkmn?.speed??3):0
+      rolls[s]=rollD10(); scores[s]=spd+rolls[s]
+    })
+    const order=ALL_FS.filter(s=>{
+      const pkmn=data[`${s}_entry`]?.[data[`${s}_active_idx`]??0]
+      return (pkmn?.hp??0)>0
+    }).sort((a,b)=>scores[b]-scores[a])
 
-  const diceTs=Date.now()
-  await updateDoc(roomRef,{dice_event:{type:"all",rolls,ts:diceTs},round_count:roundNum})
-  await animateAllDice(rolls,getNamesMap(data))
-  await updateDoc(roomRef,{dice_event:null})
-  await showRoundBanner(roundNum)
-  await addLog(`── ROUND ${roundNum} 순서: ${order.map(s=>data[`${roomName(s)}_name`]??s).join(" → ")} ──`)
-  await updateDoc(roomRef,{current_order:order})
+    const diceTs=Date.now()
+    await updateDoc(roomRef,{dice_event:{type:"all",rolls,ts:diceTs},round_count:roundNum})
+    await animateAllDice(rolls,getNamesMap(data))
+    await updateDoc(roomRef,{dice_event:null})
+    await showRoundBanner(roundNum)
+    await addLog(`── ROUND ${roundNum} 순서: ${order.map(s=>data[`${roomName(s)}_name`]??s).join(" → ")} ──`)
+    await updateDoc(roomRef,{current_order:order})
+  } catch(e) {
+    console.error("startRound 실패, roundInit 해제:", e)
+    roundInit=false  // 실패 시 다음 snapshot에서 재시도 가능하게
+  }
 }
 
 // ── 턴 진행 ───────────────────────────────────────
@@ -414,7 +428,7 @@ async function leaveAsSpectator(){
   location.href="../main.html"
 }
 async function leaveGame(){
-  const logSnap=await getDocs(logsRef); await Promise.all(logSnap.docs.map(d=>deleteDoc(d.ref)))
+  clearLogState()
   const reset={game_started:false,game_over:false,winner_team:null,current_order:[],turn_count:0,round_count:0,dice_event:null,hit_event:null,background:null,pending_switches:[]}
   ALL_FS.forEach(s=>{const rs=roomName(s);reset[`${rs}_uid`]=null;reset[`${rs}_name`]=null;reset[`${rs}_ready`]=false;reset[`${s}_entry`]=null;reset[`${s}_active_idx`]=0})
   reset.spectators=[];reset.spectator_names=[]
@@ -468,18 +482,15 @@ function updateBenchButtons(data){
   })
 }
 
-// ── 강제 교체 (active 기절 시) ──────────────────────
 function openForcedSwitch(data) {
-  if(actionDone||gameOver) return
+  if(gameOver) return
   const myEntry=data[`${mySlot}_entry`]
   const aliveIdxs=myEntry.map((p,i)=>i).filter(i=>myEntry[i].hp>0)
-
-  // 살아있는 포켓몬이 없으면 팀 전멸 → checkWin이 처리할 것
-  if(aliveIdxs.length===0) return
+  if(aliveIdxs.length===0){ forcedSwitchOpen=false; return }
 
   const overlay=document.getElementById("target-overlay")
   const btnWrap=document.getElementById("target-buttons")
-  if(!overlay||!btnWrap) return
+  if(!overlay||!btnWrap){ forcedSwitchOpen=false; return }
   btnWrap.innerHTML=""
 
   const title=overlay.querySelector("h3")
@@ -499,20 +510,18 @@ function openForcedSwitch(data) {
     btnWrap.appendChild(btn)
   })
 
-  // 취소 없음 (강제 교체는 취소 불가)
   const cancelBtn=document.getElementById("target-cancel-btn")
   if(cancelBtn) cancelBtn.style.display="none"
-
   overlay.classList.add("show")
 }
 
-// 강제 교체 실행 — pending_switches에서 내 슬롯 제거 (턴 소모 없음)
 async function forcedSwitch(newIdx, data) {
   if(gameOver) return
 
   const snap=await getDoc(roomRef), fd=snap.data()
-  // 이미 처리됐으면 무시
-  if(!(fd.pending_switches??[]).includes(mySlot)) return
+  if(!(fd.pending_switches??[]).includes(mySlot)){
+    forcedSwitchOpen=false; return
+  }
 
   const entries=deepCopyEntries(fd)
   const myName=fd[`${roomName(mySlot)}_name`]
@@ -520,11 +529,12 @@ async function forcedSwitch(newIdx, data) {
 
   await addLog(`${myName}${josa(myName,"은는")} ${next}${josa(next,"을를")} 내보냈다!`)
 
-  // 취소 버튼 복원
   const cancelBtn=document.getElementById("target-cancel-btn")
   if(cancelBtn) cancelBtn.style.display=""
   const title=document.querySelector("#target-overlay h3")
   if(title) title.innerText="누구에게 사용할까?"
+
+  forcedSwitchOpen=false  // 교체 완료 → 플래그 해제
 
   const newPending=(fd.pending_switches??[]).filter(s=>s!==mySlot)
   await updateDoc(roomRef,{
@@ -532,7 +542,6 @@ async function forcedSwitch(newIdx, data) {
     [`${mySlot}_active_idx`]: newIdx,
     pending_switches: newPending
   })
-  // pending_switches가 비면 listenRoom에서 p1이 startRound 호출
 }
 
 // ── 타겟 선택 오버레이 ───────────────────────────
@@ -738,6 +747,38 @@ async function handleWin(winTeam,data,partialUpdate){
   await updateDoc(roomRef,update)
   await grantWinCoins(winTeam,data)
   await addLog(`🏆 팀${winTeam}의 승리!`)
+  // p1만 게임 기록 저장 (중복 방지)
+  if(!isSpectator&&mySlot==="p1") await saveGameRecord(winTeam,data)
+}
+
+// ── 게임 기록 저장 ────────────────────────────────
+// double/{ROOM_ID}/games/{gameId} 에 저장
+// 기존 싱글배틀의 rooms/{roomId}/games 구조와 동일
+async function saveGameRecord(winTeam,data){
+  try {
+    // logs 서브컬렉션 전체 읽기
+    const logSnap=await getDocs(query(logsRef,orderBy("ts")))
+    const logs=logSnap.docs.map(d=>({text:d.data().text,ts:d.data().ts}))
+
+    const teamANames=[data.player1_name,data.player2_name].filter(Boolean).join(" & ")
+    const teamBNames=[data.player3_name,data.player4_name].filter(Boolean).join(" & ")
+    const winnerName=winTeam==="A"?teamANames:teamBNames
+
+    const gamesRef=collection(db,"double",ROOM_ID,"games")
+    await addDoc(gamesRef,{
+      p1: teamANames,
+      p2: teamBNames,
+      winner: winnerName,
+      winner_team: winTeam,
+      logs,
+      createdAt: Date.now()
+    })
+
+    // 저장 완료 후 logs 서브컬렉션 삭제
+    await Promise.all(logSnap.docs.map(d=>deleteDoc(d.ref)))
+  } catch(e){
+    console.warn("게임 기록 저장 실패",e)
+  }
 }
 
 // ── 유틸 ─────────────────────────────────────────
