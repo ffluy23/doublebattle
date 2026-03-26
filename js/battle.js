@@ -502,7 +502,7 @@ async function startRound(data) {
     const names=getNamesMap(fresh)
     const diceTs=Date.now()
     await updateDoc(roomRef,{dice_event:{type:"all",rolls,slots:activeSlots,ts:diceTs}})
-    await animateAllDice(rolls,names)
+    await animateAllDice(rolls,names,activeSlots)
     await updateDoc(roomRef,{dice_event:null})
     await showRoundBanner(roundNum)
     await addLog(`── ROUND ${roundNum} 순서: ${order.map(s=>fresh[`${roomName(s)}_name`]??s).join(" → ")} ──`)
@@ -737,7 +737,7 @@ function openTargetSelect(moveIdx,data){
 
   // 둘 다 살아있을 때만 선택지 표시
   aliveEnemies.forEach(({s,pkmn})=>{
-    makeBtn(`${data[`${roomName(s)}_name`]??s}의 ${pkmn.name} (HP: ${pkmn.hp})`,[s])
+    makeBtn(`${data[`${roomName(s)}_name`]??s}의 ${pkmn.name}`,[s])
   })
   overlay.classList.add("show")
   document.getElementById("target-cancel-btn").onclick=()=>{overlay.classList.remove("show");actionDone=false}
