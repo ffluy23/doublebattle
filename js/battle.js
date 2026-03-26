@@ -1,6 +1,6 @@
 // battle.js (더블배틀 - 서버 연동 버전)
 
-import { auth, db } from "./firebase.js"
+import { auth, db, app } from "./firebase.js"
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js"
 import {
   doc, collection, getDoc, addDoc, deleteDoc,
@@ -14,8 +14,7 @@ import { statusName, josa as josaEH } from "./effecthandler.js"
 
 const roomRef = doc(db, "double", ROOM_ID)
 const logsRef = collection(db, "double", ROOM_ID, "logs")
-const functions = getFunctions()
-
+const functions = getFunctions(app)
 // 서버 함수 연결
 const fnStartRound    = httpsCallable(functions, "startRound")
 const fnUseMove       = httpsCallable(functions, "useMove")
@@ -213,19 +212,6 @@ onAuthStateChanged(auth, async user=>{
 function listenRoom() {
   onSnapshot(roomRef, async snap=>{
     const data=snap.data(); if(!data) return
-
-    onSnapshot(roomRef, async snap=>{
-  const data = snap.data(); if(!data) return
-
-  // ← 이거 임시로 추가
-  console.log("entry 상태:", {
-    p1: data.p1_entry,
-    p2: data.p2_entry,
-    p3: data.p3_entry,
-    p4: data.p4_entry,
-    mySlot,
-    current_order: data.current_order
-  })
 
     ALL_FS.forEach(s=>{ const el=document.getElementById(`${s}-name`); if(el) el.innerText=data[`${roomName(s)}_name`]??"대기..." })
     const spectEl=document.getElementById("spectator-list")
