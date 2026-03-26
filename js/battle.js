@@ -53,6 +53,7 @@ let gameOver   = false
 let lastHitTs  = 0
 let lastDiceTs = 0
 let forcedSwitchOpen = false  // 강제 교체 오버레이 중복 방지
+let isFirstSnapshot  = true   // 새로고침 후 첫 수신 여부
 
 const isSpectator = new URLSearchParams(location.search).get("spectator")==="true"
 
@@ -336,6 +337,26 @@ function listenRoom() {
 
     if(data.game_over){showGameOver(data);return}
 
+    // ── 새로고침 후 첫 수신: Firestore 기준으로 로컬 상태 복구 ──
+    if(isFirstSnapshot){
+      isFirstSnapshot=false
+      if(!isSpectator&&mySlot){
+        const order=data.current_order??[]
+        const pending=data.pending_switches??[]
+
+        // 내 턴이었으면 actionDone=false로 복구 (다시 조작 가능하게)
+        myTurn=order.length>0&&order[0]===mySlot
+        actionDone=false
+
+        // roundInit: current_order가 비어있고 pending도 없으면
+        // p1이 startRound를 담당해야 하므로 false로 둠
+        roundInit=false
+
+        // forcedSwitch 오버레이 상태 초기화
+        forcedSwitchOpen=false
+      }
+    }
+
     // current_order 없음 = 라운드 시작 대기
     if(!data.current_order||data.current_order.length===0){
       // pending_switches: 기절 슬롯들이 교체 대기 중
@@ -358,9 +379,10 @@ function listenRoom() {
     }
 
     if(!isSpectator&&mySlot){
-      const wasMine=myTurn
-      myTurn=data.current_order[0]===mySlot
-      if(!wasMine&&myTurn) actionDone=false
+      const nowMyTurn=data.current_order[0]===mySlot
+      // 내 턴이 새로 됐을 때만 actionDone 리셋 (새로고침 시엔 isFirstSnapshot에서 이미 처리)
+      if(!myTurn&&nowMyTurn) actionDone=false
+      myTurn=nowMyTurn
     }
     updateTurnUI(data)
     updateBenchButtons(data)
@@ -375,6 +397,15 @@ function getNamesMap(data){const m={};ALL_FS.forEach(s=>{m[s]=data[`${roomName(s
 async function startRound(data) {
   try {
     const roundNum=(data.round_count??0)+1
+
+    // Firestore 레벨 락: round_count 먼저 올려서 중복 실행 방지
+    // 새로고침한 p1이 동시에 시도해도 한 쪽만 진행됨
+    await updateDoc(roomRef,{round_count:roundNum})
+    const check=await getDoc(roomRef)
+    if((check.data().round_count??0)!==roundNum){
+      roundInit=false; return  // 다른 클라이언트가 먼저 처리함
+    }
+
     const rolls={},scores={}
     ALL_FS.forEach(s=>{
       const pkmn=data[`${s}_entry`]?.[data[`${s}_active_idx`]??0]
@@ -388,7 +419,7 @@ async function startRound(data) {
     }).sort((a,b)=>scores[b]-scores[a])
 
     const diceTs=Date.now()
-    await updateDoc(roomRef,{dice_event:{type:"all",rolls,ts:diceTs},round_count:roundNum})
+    await updateDoc(roomRef,{dice_event:{type:"all",rolls,ts:diceTs}})
     await animateAllDice(rolls,getNamesMap(data))
     await updateDoc(roomRef,{dice_event:null})
     await showRoundBanner(roundNum)
@@ -396,7 +427,7 @@ async function startRound(data) {
     await updateDoc(roomRef,{current_order:order})
   } catch(e) {
     console.error("startRound 실패, roundInit 해제:", e)
-    roundInit=false  // 실패 시 다음 snapshot에서 재시도 가능하게
+    roundInit=false
   }
 }
 
