@@ -16,7 +16,7 @@ import { statusName, josa as josaEH } from "./effecthandler.js"
 const ROOM_ID = window.ROOM_ID
 const roomRef = doc(db, "double", ROOM_ID)
 const logsRef = collection(db, "double", ROOM_ID, "logs")
-const functions = getFunctions(app)
+const functions = getFunctions(app, "us-central1")
 // 서버 함수 연결
 const fnStartRound    = httpsCallable(functions, "startRound")
 const fnUseMove       = httpsCallable(functions, "useMove")
@@ -94,7 +94,7 @@ function showBattlePopup(prefix, type) {
   const wrap=document.getElementById(`${prefix}-pokemon-area`); if(!wrap) return
   const el=document.createElement("div"); el.className=`battle-popup ${type}`; el.innerText=type==="critical"?"급소!":"회피!"
   wrap.appendChild(el); void el.offsetWidth; el.classList.add("show")
-  el.addEventer("animationend",()=>el.remove(),{once:true})
+  el.addEventListener("animationend",()=>el.remove(),{once:true})
 }
 
 // ── 로그 ─────────────────────────────────────────
@@ -268,7 +268,6 @@ function listenRoom() {
     // current_order 없음 = 라운드 시작 대기
     if(!data.current_order||data.current_order.length===0){
       const pending=data.pending_switches??[]
-      console.log("체크:", { isSpectator, mySlot, pendingLen: pending.length })
 
       // 강제 교체 대기 중
       if(!isSpectator&&mySlot&&pending.includes(mySlot)&&!forcedSwitchOpen){
@@ -279,10 +278,10 @@ function listenRoom() {
       if(!isSpectator&&mySlot&&pending.includes(mySlot)) return
 
       // 모든 교체 완료 → p1이 라운드 시작 (서버 호출)
-if(!isSpectator&&mySlot==="p1"&&pending.length===0){
-  console.log("startRound 호출 시도!", {mySlot, pending, current_order: data.current_order})
-  callStartRound(data)
-}
+      if(!isSpectator&&mySlot==="p1"&&pending.length===0){
+        console.log("startRound 호출 시도!", {mySlot, pending, current_order: data.current_order})
+        callStartRound(data)
+      }
       return
     }
 
@@ -302,14 +301,11 @@ if(!isSpectator&&mySlot==="p1"&&pending.length===0){
 let startRoundCalling = false
 async function callStartRound(data) {
   if(startRoundCalling) return
-  // 이미 라운드 진행 중이면 스킵
   if(data.current_order&&data.current_order.length>0) return
   startRoundCalling=true
   try {
     const result=await fnStartRound({ roomId: ROOM_ID })
     if(result.data.ok){
-      const names=getNamesMap(data)
-      // 다이스 애니메이션은 dice_event onSnapshot이 처리
       await showRoundBanner(result.data.roundNum)
     }
   } catch(e){
@@ -322,7 +318,7 @@ async function callStartRound(data) {
 async function callUseMove(moveIdx, targetSlots) {
   if(!myTurn||actionDone||gameOver) return
   actionDone=true
-  updateMoveButtons({}) // 버튼 비활성화
+  updateMoveButtons({})
 
   try {
     const result=await fnUseMove({
@@ -357,7 +353,6 @@ async function callForcedSwitch(newIdx, data) {
     const result=await fnForcedSwitch({ roomId: ROOM_ID, mySlot, newIdx })
     if(result.data.ok){
       forcedSwitchOpen=false
-      // 로그 추가 (강제 교체 메시지는 서버에서 안 써줘서 클라이언트가)
       const myName=data[`${roomName(mySlot)}_name`]
       const snap=await getDoc(roomRef), fd=snap.data()
       const next=fd[`${mySlot}_entry`]?.[newIdx]?.name??""
@@ -391,13 +386,11 @@ function openTargetSelect(moveIdx, data) {
     btnWrap.appendChild(btn)
   }
 
-  // 범위기
   if(moveInfo?.targetAll){
     const targets=[]; if(e1&&e1.hp>0) targets.push(en1); if(e2&&e2.hp>0) targets.push(en2)
     callUseMove(moveIdx, targets); return
   }
 
-  // 아군 대상
   if(moveInfo?.targetAlly){
     makeBtn(`나 (${myPkmn.name})`,[mySlot])
     if(allyPkmn&&allyPkmn.hp>0) makeBtn(`동료 (${allyPkmn.name})`,[allyS])
@@ -406,7 +399,6 @@ function openTargetSelect(moveIdx, data) {
     return
   }
 
-  // 단일 적
   const aliveEnemies=[]
   if(e1&&e1.hp>0) aliveEnemies.push({s:en1,pkmn:e1})
   if(e2&&e2.hp>0) aliveEnemies.push({s:en2,pkmn:e2})
