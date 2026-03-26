@@ -401,6 +401,19 @@ function listenRoom() {
           return
         }
       }
+
+      // 내 턴인데 행동 불능 상태 (풀죽음/마비/얼음) → 자동 처리
+      if(myTurn&&!actionDone){
+        const myActive=data[`${mySlot}_entry`]?.[data[`${mySlot}_active_idx`]??0]
+        if(myActive){
+          const pre=checkPreActionStatus(myActive)
+          if(pre.blocked){
+            actionDone=true
+            autoBlockedTurn(data,pre.msgs)
+            return
+          }
+        }
+      }
     }
     updateTurnUI(data)
     updateBenchButtons(data)
@@ -411,7 +424,6 @@ function listenRoom() {
 // 엔트리 전멸 시 자동 턴 스킵
 async function skipTurn(data) {
   const snap=await getDoc(roomRef),fd=snap.data()
-  // 이미 턴이 넘어갔으면 무시
   if(!fd.current_order||fd.current_order[0]!==mySlot){actionDone=false;return}
   const entries=deepCopyEntries(fd)
   const {current_order,turn_count,eot}=await advanceTurn(entries,fd)
@@ -419,6 +431,30 @@ async function skipTurn(data) {
   if(eot){
     const {msgs}=applyEndOfTurnDamage([entries.p1,entries.p2,entries.p3,entries.p4])
     for(const m of msgs){await addLog(m);await wait(280)}
+    Object.assign(update,buildEntryUpdate(entries))
+    const w=checkWin(entries);if(w){await handleWin(w,fd,update);return}
+    update.pending_switches=collectFaintedSlots(entries,fd)
+  }
+  await updateDoc(roomRef,update)
+}
+
+// 풀죽음/마비/얼음 등 행동 불능 시 자동 턴 처리
+async function autoBlockedTurn(data,msgs) {
+  const snap=await getDoc(roomRef),fd=snap.data()
+  if(!fd.current_order||fd.current_order[0]!==mySlot){actionDone=false;return}
+  const entries=deepCopyEntries(fd)
+  const myActive=entries[mySlot][fd[`${mySlot}_active_idx`]??0]
+
+  // 상태 적용 (풀죽음 해제 등)
+  checkPreActionStatus(myActive)
+
+  for(const msg of msgs){await addLog(msg);await wait(350)}
+
+  const {current_order,turn_count,eot}=await advanceTurn(entries,fd)
+  const update={...buildEntryUpdate(entries),current_order,turn_count}
+  if(eot){
+    const {msgs:eotMsgs}=applyEndOfTurnDamage([entries.p1,entries.p2,entries.p3,entries.p4])
+    for(const m of eotMsgs){await addLog(m);await wait(280)}
     Object.assign(update,buildEntryUpdate(entries))
     const w=checkWin(entries);if(w){await handleWin(w,fd,update);return}
     update.pending_switches=collectFaintedSlots(entries,fd)
