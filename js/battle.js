@@ -298,7 +298,13 @@ function listenRoom() {
 
     if(!data.p1_entry||!data.p2_entry||!data.p3_entry||!data.p4_entry) return
 
-    if(!isSpectator&&mySlot){
+    if(isSpectator){
+      // 관전자: p1→my, p2→ally, p3→enemy1, p4→enemy2 고정 매핑
+      updateActiveUI("p1",data,"my"); updateActiveUI("p2",data,"ally")
+      updateActiveUI("p3",data,"enemy1"); updateActiveUI("p4",data,"enemy2")
+      const setTag=(pfx,s)=>{const el=document.getElementById(`${pfx}-player-tag`);if(el)el.innerText=data[`${roomName(s)}_name`]??""}
+      setTag("my","p1"); setTag("ally","p2"); setTag("enemy1","p3"); setTag("enemy2","p4")
+    } else if(mySlot){
       const ally=allySlot(mySlot),[en1,en2]=enemySlots(mySlot)
       updateActiveUI(mySlot,data,"my"); updateActiveUI(ally,data,"ally")
       updateActiveUI(en1,data,"enemy1"); updateActiveUI(en2,data,"enemy2")
@@ -309,11 +315,15 @@ function listenRoom() {
     // hit 이벤트
     if(data.hit_event&&data.hit_event.ts>lastHitTs){
       lastHitTs=data.hit_event.ts
-      if(!isSpectator&&mySlot){
-        const def=data.hit_event.defender
-        const pfx=def===mySlot?"my":def===allySlot(mySlot)?"ally":enemySlots(mySlot).indexOf(def)===0?"enemy1":"enemy2"
-        triggerBlink(pfx)
+      const def=data.hit_event.defender
+      let pfx
+      if(isSpectator){
+        // 관전자: p1→my, p2→ally, p3→enemy1, p4→enemy2
+        pfx=def==="p1"?"my":def==="p2"?"ally":def==="p3"?"enemy1":"enemy2"
+      } else if(mySlot){
+        pfx=def===mySlot?"my":def===allySlot(mySlot)?"ally":enemySlots(mySlot).indexOf(def)===0?"enemy1":"enemy2"
       }
+      if(pfx) triggerBlink(pfx)
     }
 
     // dice 이벤트
@@ -351,8 +361,8 @@ function listenRoom() {
       const wasMine=myTurn
       myTurn=data.current_order[0]===mySlot
       if(!wasMine&&myTurn) actionDone=false
-      updateTurnUI(data)
     }
+    updateTurnUI(data)
     updateBenchButtons(data)
     updateMoveButtons(data)
   })
@@ -446,7 +456,15 @@ function updateActiveUI(fsSlot,data,prefix){
 }
 function updateTurnUI(data){
   const el=document.getElementById("turn-display"),tc=document.getElementById("turn-count")
-  if(el&&!isSpectator){el.innerText=myTurn?"내 턴!":"상대 턴...";el.style.color=myTurn?"green":"gray"}
+  if(el){
+    if(isSpectator){
+      const cur=data.current_order?.[0]
+      el.innerText=cur?`${data[`${roomName(cur)}_name`]??cur}의 턴`:"대기 중"
+      el.style.color="gray"
+    } else {
+      el.innerText=myTurn?"내 턴!":"상대 턴...";el.style.color=myTurn?"green":"gray"
+    }
+  }
   if(tc) tc.innerText=`라운드 ${data.round_count??1}`
 }
 
@@ -752,11 +770,10 @@ async function handleWin(winTeam,data,partialUpdate){
 }
 
 // ── 게임 기록 저장 ────────────────────────────────
-// double/{ROOM_ID}/games/{gameId} 에 저장
-// 기존 싱글배틀의 rooms/{roomId}/games 구조와 동일
+// main.js 구조와 동일: double/{ROOM_ID}/games/{gameId}
+// { p1, p2, winner, logs: [{text,ts}], createdAt }
 async function saveGameRecord(winTeam,data){
   try {
-    // logs 서브컬렉션 전체 읽기
     const logSnap=await getDocs(query(logsRef,orderBy("ts")))
     const logs=logSnap.docs.map(d=>({text:d.data().text,ts:d.data().ts}))
 
@@ -766,15 +783,14 @@ async function saveGameRecord(winTeam,data){
 
     const gamesRef=collection(db,"double",ROOM_ID,"games")
     await addDoc(gamesRef,{
-      p1: teamANames,
-      p2: teamBNames,
+      p1: teamANames,   // 기존 main.js: p1 = player1 이름
+      p2: teamBNames,   // 기존 main.js: p2 = player2 이름
       winner: winnerName,
-      winner_team: winTeam,
       logs,
       createdAt: Date.now()
     })
 
-    // 저장 완료 후 logs 서브컬렉션 삭제
+    // 저장 후 logs 서브컬렉션 정리
     await Promise.all(logSnap.docs.map(d=>deleteDoc(d.ref)))
   } catch(e){
     console.warn("게임 기록 저장 실패",e)
