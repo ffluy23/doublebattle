@@ -4,6 +4,7 @@ import { auth, db } from "./firebase.js"
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js"
 import { doc, getDoc, updateDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js"
 
+const ROOM_ID = window.ROOM_ID
 const roomRef = doc(db, "double", ROOM_ID)
 let myUid = null, myNickname = null, myDisplayName = null
 
