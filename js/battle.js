@@ -1,150 +1,82 @@
-// battle.js (더블배틀 4인 - 라운드제 순서 + 타겟 선택 버튼)
+// battle.js (더블배틀 - 서버 연동 버전)
 
 import { auth, db } from "./firebase.js"
 import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js"
 import {
-  doc, collection, getDoc, getDocs, updateDoc, addDoc, deleteDoc,
-  onSnapshot, query, orderBy, increment
+  doc, collection, getDoc, addDoc, deleteDoc,
+  onSnapshot, query, orderBy, increment, updateDoc
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js"
-import { moves } from "./moves.js"
-import { getTypeMultiplier } from "./typeChart.js"
 import {
-  statusName, josa as josaEH,
-  applyMoveEffect, checkPreActionStatus, checkConfusion,
-  applyEndOfTurnDamage, applyWeatherEffect,
-  getStatusSpdPenalty
-} from "./effecthandler.js"
+  getFunctions, httpsCallable
+} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-functions.js"
+import { moves } from "./moves.js"
+import { statusName, josa as josaEH } from "./effecthandler.js"
 
 const roomRef = doc(db, "double", ROOM_ID)
 const logsRef = collection(db, "double", ROOM_ID, "logs")
+const functions = getFunctions()
+
+// 서버 함수 연결
+const fnStartRound    = httpsCallable(functions, "startRound")
+const fnUseMove       = httpsCallable(functions, "useMove")
+const fnSwitchPokemon = httpsCallable(functions, "switchPokemon")
+const fnForcedSwitch  = httpsCallable(functions, "forcedSwitch")
 
 const SFX_DICE = "https://slippery-copper-mzpmcmc2ra.edgeone.app/soundreality-bicycle-bell-155622.mp3"
 const SFX_BTN  = "https://usual-salmon-mnqxptwyvw.edgeone.app/Pokemon%20(A%20Button)%20-%20Sound%20Effect%20(HD)%20(1)%20(1).mp3"
 
-// ── 슬롯 상수 ──────────────────────────────────────
-const TEAM_A = ["p1", "p2"]
-const TEAM_B = ["p3", "p4"]
-const ALL_FS = ["p1", "p2", "p3", "p4"]
+const TEAM_A = ["p1","p2"]
+const TEAM_B = ["p3","p4"]
+const ALL_FS = ["p1","p2","p3","p4"]
 
-function teamOf(s)     { return TEAM_A.includes(s) ? "A" : TEAM_B.includes(s) ? "B" : null }
-function allySlot(s)   { return s==="p1"?"p2": s==="p2"?"p1": s==="p3"?"p4": s==="p4"?"p3": null }
+function teamOf(s)     { return TEAM_A.includes(s) ? "A" : "B" }
+function allySlot(s)   { return s==="p1"?"p2": s==="p2"?"p1": s==="p3"?"p4": "p3" }
 function enemySlots(s) { return teamOf(s)==="A" ? TEAM_B : TEAM_A }
 function roomName(s)   { return s.replace("p","player") }
 
-// ── 유틸 ────────────────────────────────────────────
-function playSound(url)  { const a=new Audio(url); a.volume=0.6; a.play().catch(()=>{}) }
-function wait(ms)        { return new Promise(r=>setTimeout(r,ms)) }
-function josa(w,t)       { return josaEH(w,t) }
-function rollD10()       { return Math.floor(Math.random()*10)+1 }
-function isAllFainted(entry) { return entry.every(p=>p.hp<=0) }
-function teamFainted(entries, team) {
-  return team==="A"
-    ? isAllFainted(entries.p1) && isAllFainted(entries.p2)
-    : isAllFainted(entries.p3) && isAllFainted(entries.p4)
-}
+function playSound(url) { const a=new Audio(url); a.volume=0.6; a.play().catch(()=>{}) }
+function wait(ms)       { return new Promise(r=>setTimeout(r,ms)) }
+function josa(w,t)      { return josaEH(w,t) }
+function rollD10()      { return Math.floor(Math.random()*10)+1 }
 
-// ── 상태 변수 ────────────────────────────────────────
-let mySlot     = null
-let myUid      = null
-let myTurn     = false
-let roundInit  = false
+let mySlot    = null
+let myUid     = null
+let myTurn    = false
 let actionDone = false
-let gameOver   = false
-let lastHitTs  = 0
+let gameOver  = false
+let lastHitTs = 0
 let lastDiceTs = 0
-let forcedSwitchOpen = false  // 강제 교체 오버레이 중복 방지
-let isFirstSnapshot  = true   // 새로고침 후 첫 수신 여부
+let forcedSwitchOpen = false
+let isFirstSnapshot  = true
 
-const isSpectator = new URLSearchParams(location.search).get("spectator")==="true"
-
-// ── 랭크 ────────────────────────────────────────────
-function defaultRanks() { return { atk:0,atkTurns:0,def:0,defTurns:0,spd:0,spdTurns:0 } }
-function getActiveRank(pkmn,key) {
-  const r=pkmn.ranks??{}; return (r[`${key}Turns`]??0)>0?(r[key]??0):0
-}
-function tickMyRanks(pkmn) {
-  if(!pkmn.ranks) return []
-  const r=pkmn.ranks,msgs=[]
-  if(r.atkTurns>0){r.atkTurns--;if(!r.atkTurns){r.atk=0;msgs.push(`${pkmn.name}의 공격 랭크가 원래대로 돌아왔다!`)}}
-  if(r.defTurns>0){r.defTurns--;if(!r.defTurns){r.def=0;msgs.push(`${pkmn.name}의 방어 랭크가 원래대로 돌아왔다!`)}}
-  if(r.spdTurns>0){r.spdTurns--;if(!r.spdTurns){r.spd=0;msgs.push(`${pkmn.name}의 스피드 랭크가 원래대로 돌아왔다!`)}}
-  return msgs
-}
-function applyRankChanges(r,self,target) {
-  if(!r) return []
-  const msgs=[]
-  const roll=r.chance!==undefined?Math.random()<r.chance:true
-  if(!roll) return []
-  const sR={...defaultRanks(),...(self.ranks??{})}
-  const tR={...defaultRanks(),...(target.ranks??{})}
-  const label={atk:"공격",def:"방어",spd:"스피드"}
-  function applyOne(obj,key,delta,maxV,minV,name){
-    if(delta>0){const p=obj[key];obj[key]=Math.min(maxV,obj[key]+delta);obj[`${key}Turns`]=r.turns??2;msgs.push(`${name}의 ${label[key]}이 올라갔다! (+${obj[key]-p})`)}
-    else if(delta<0){if(obj[key]===0)msgs.push(`${name}의 ${label[key]}은 더 이상 내려가지 않는다!`);else{const p=obj[key];obj[key]=Math.max(minV,obj[key]+delta);obj[`${key}Turns`]=r.turns??2;msgs.push(`${name}의 ${label[key]}이 내려갔다! (${obj[key]-p})`)}}
-  }
-  if(r.atk!==undefined)       applyOne(sR,"atk",r.atk,4,0,self.name)
-  if(r.def!==undefined)       applyOne(sR,"def",r.def,3,0,self.name)
-  if(r.spd!==undefined)       applyOne(sR,"spd",r.spd,5,0,self.name)
-  if(r.targetAtk!==undefined) applyOne(tR,"atk",r.targetAtk,4,0,target.name)
-  if(r.targetDef!==undefined) applyOne(tR,"def",r.targetDef,3,0,target.name)
-  if(r.targetSpd!==undefined) applyOne(tR,"spd",r.targetSpd,5,0,target.name)
-  self.ranks=sR; target.ranks=tR
-  return msgs
-}
-
-// ── 전투 계산 ─────────────────────────────────────
-function calcHit(atk,moveInfo,def) {
-  if(Math.random()*100>=(moveInfo.accuracy??100)) return {hit:false,hitType:"missed"}
-  if(moveInfo.alwaysHit||moveInfo.skipEvasion)    return {hit:true,hitType:"hit"}
-  const as=Math.max(1,(atk.speed??3)-getStatusSpdPenalty(atk))
-  const ds=Math.max(1,(def.speed??3)-getStatusSpdPenalty(def))
-  const ev=Math.min(99,Math.max(0,5*(ds-as))+Math.max(0,getActiveRank(def,"spd")))
-  return Math.random()*100<ev?{hit:false,hitType:"evaded"}:{hit:true,hitType:"hit"}
-}
-function calcDamage(atk,moveName,def,atkRank=0,defRank=0) {
-  const move=moves[moveName]
-  if(!move) return {damage:0,multiplier:1,stab:false,dice:0,critical:false}
-  const dice=rollD10()
-  const defTypes=Array.isArray(def.type)?def.type:[def.type]
-  let mult=1; for(const dt of defTypes) mult*=getTypeMultiplier(move.type,dt)
-  if(mult===0) return {damage:0,multiplier:0,stab:false,dice,critical:false}
-  const atkTypes=Array.isArray(atk.type)?atk.type:[atk.type]
-  const stab=atkTypes.includes(move.type)
-  const base=(move.power??40)+(atk.attack??3)*4+dice
-  const raw=Math.floor(base*mult*(stab?1.3:1))
-  const afterAtk=Math.max(0,raw+Math.max(-raw,atkRank))
-  const afterDef=Math.max(0,afterAtk-(def.defense??3)*5)
-  const baseDmg=Math.max(0,afterDef-Math.min(3,Math.max(0,defRank))*3)
-  const critical=Math.random()*100<Math.min(100,(atk.attack??3)*2)
-  return {damage:critical?Math.floor(baseDmg*1.5):baseDmg,multiplier:mult,stab,dice,critical}
-}
+const isSpectator = new URLSearchParams(location.search).get("spectator") === "true"
 
 // ── HP 바 & 초상화 ───────────────────────────────
-function updateHpBar(barId,textId,hp,maxHp,showNum) {
-  const bar=document.getElementById(barId),txt=textId?document.getElementById(textId):null
+function updateHpBar(barId, textId, hp, maxHp, showNum) {
+  const bar=document.getElementById(barId), txt=textId?document.getElementById(textId):null
   if(!bar) return
-  const pct=maxHp>0?Math.max(0,Math.min(100,(hp/maxHp)*100)):0
-  bar.style.width=pct+"%"
-  bar.style.backgroundColor=pct>50?"#4caf50":pct>20?"#ff9800":"#f44336"
-  if(txt) txt.innerText=showNum?`HP: ${hp} / ${maxHp}`:""
+  const pct = maxHp>0 ? Math.max(0,Math.min(100,(hp/maxHp)*100)) : 0
+  bar.style.width = pct+"%"
+  bar.style.backgroundColor = pct>50?"#4caf50":pct>20?"#ff9800":"#f44336"
+  if(txt) txt.innerText = showNum ? `HP: ${hp} / ${maxHp}` : ""
 }
-function updatePortrait(prefix,pkmn) {
+function updatePortrait(prefix, pkmn) {
   const img=document.getElementById(`${prefix}-portrait`); if(!img) return
-  if(!pkmn?.portrait){img.classList.remove("visible");img.style.display="none";return}
+  if(!pkmn?.portrait){ img.classList.remove("visible"); img.style.display="none"; return }
   img.style.display="block"; img.src=pkmn.portrait; img.alt=pkmn.name
   setTimeout(()=>img.classList.add("visible"),80)
 }
 
 // ── 전투 이펙트 ──────────────────────────────────
-function triggerAttackEffect(atkPfx,defPfx) {
+function triggerAttackEffect(atkPfx, defPfx) {
   return new Promise(resolve=>{
     const atkArea=document.getElementById(`${atkPfx}-pokemon-area`)
     const defArea=document.getElementById(`${defPfx}-pokemon-area`)
     const wrapper=document.getElementById("main")
-    if(atkArea){atkArea.classList.add("attacker-flash");atkArea.addEventListener("animationend",()=>atkArea.classList.remove("attacker-flash"),{once:true})}
-    if(wrapper){wrapper.classList.add("screen-shake");wrapper.addEventListener("animationend",()=>wrapper.classList.remove("screen-shake"),{once:true})}
+    if(atkArea){ atkArea.classList.add("attacker-flash"); atkArea.addEventListener("animationend",()=>atkArea.classList.remove("attacker-flash"),{once:true}) }
+    if(wrapper){ wrapper.classList.add("screen-shake"); wrapper.addEventListener("animationend",()=>wrapper.classList.remove("screen-shake"),{once:true}) }
     setTimeout(()=>{
-      if(defArea){defArea.classList.add("defender-hit");defArea.addEventListener("animationend",()=>{defArea.classList.remove("defender-hit");resolve()},{once:true})}
+      if(defArea){ defArea.classList.add("defender-hit"); defArea.addEventListener("animationend",()=>{ defArea.classList.remove("defender-hit"); resolve() },{once:true}) }
       else resolve()
     },120)
   })
@@ -152,12 +84,12 @@ function triggerAttackEffect(atkPfx,defPfx) {
 function triggerBlink(prefix) {
   return new Promise(resolve=>{
     const area=document.getElementById(`${prefix}-pokemon-area`)
-    if(!area){resolve();return}
+    if(!area){ resolve(); return }
     area.classList.add("blink-damage")
-    area.addEventListener("animationend",()=>{area.classList.remove("blink-damage");resolve()},{once:true})
+    area.addEventListener("animationend",()=>{ area.classList.remove("blink-damage"); resolve() },{once:true})
   })
 }
-function showBattlePopup(prefix,type) {
+function showBattlePopup(prefix, type) {
   const wrap=document.getElementById(`${prefix}-pokemon-area`); if(!wrap) return
   const el=document.createElement("div"); el.className=`battle-popup ${type}`; el.innerText=type==="critical"?"급소!":"회피!"
   wrap.appendChild(el); void el.offsetWidth; el.classList.add("show")
@@ -165,31 +97,26 @@ function showBattlePopup(prefix,type) {
 }
 
 // ── 로그 ─────────────────────────────────────────
-let renderedLogIds=new Set(),typingQueue=[],isTyping=false
+let renderedLogIds=new Set(), typingQueue=[], isTyping=false
 
 function clearLogState() {
-  renderedLogIds=new Set()
-  typingQueue=[]
-  isTyping=false
-  const log=document.getElementById("battle-log")
-  if(log) log.innerHTML=""
+  renderedLogIds=new Set(); typingQueue=[]; isTyping=false
+  const log=document.getElementById("battle-log"); if(log) log.innerHTML=""
 }
-
 function processQueue() {
   if(isTyping||typingQueue.length===0) return
   isTyping=true
   const {text,resolve}=typingQueue.shift()
   const log=document.getElementById("battle-log")
-  if(!log){isTyping=false;if(resolve)resolve();processQueue();return}
+  if(!log){ isTyping=false; if(resolve)resolve(); processQueue(); return }
   const line=document.createElement("p"); log.appendChild(line)
   const chars=[...text]; let i=0
   function typeNext(){
-    if(i>=chars.length){isTyping=false;if(resolve)resolve();setTimeout(processQueue,80);return}
+    if(i>=chars.length){ isTyping=false; if(resolve)resolve(); setTimeout(processQueue,80); return }
     line.textContent+=chars[i++]; log.scrollTop=log.scrollHeight; setTimeout(typeNext,18)
   }
   typeNext()
 }
-async function addLog(text) { await addDoc(logsRef,{text,ts:Date.now()}) }
 function listenLogs() {
   clearLogState()
   const q=query(logsRef,orderBy("ts"))
@@ -209,12 +136,9 @@ function popDiceNum(el) {
   el.classList.remove("pop"); void el.offsetWidth; el.classList.add("pop")
   el.addEventListener("animationend",()=>el.classList.remove("pop"),{once:true})
 }
-
-// 4개 동시 다이스 (라운드 순서용)
-function animateAllDice(rolls,names,slots=ALL_FS) {
+function animateAllDice(rolls, names, slots=ALL_FS) {
   return new Promise(resolve=>{
-    const wrap=document.getElementById("dice-wrap"); if(!wrap){resolve();return}
-    // 살아있는 슬롯만 표시, 나머지는 숨김
+    const wrap=document.getElementById("dice-wrap"); if(!wrap){ resolve(); return }
     ALL_FS.forEach(s=>{
       const box=document.getElementById(`dice-box-${s}`)
       if(box) box.style.display=slots.includes(s)?"block":"none"
@@ -224,31 +148,29 @@ function animateAllDice(rolls,names,slots=ALL_FS) {
     wrap.style.display="flex"
     let count=0
     const iv=setInterval(()=>{
-      slots.forEach(s=>{const el=document.getElementById(`dice-${s}`);if(el)el.innerText=rollD10()})
+      slots.forEach(s=>{ const el=document.getElementById(`dice-${s}`); if(el) el.innerText=rollD10() })
       if(++count>=22){
         clearInterval(iv)
-        slots.forEach(s=>{const el=document.getElementById(`dice-${s}`);if(el)el.innerText=rolls[s]})
+        slots.forEach(s=>{ const el=document.getElementById(`dice-${s}`); if(el) el.innerText=rolls[s] })
         const maxScore=Math.max(...slots.map(s=>rolls[s]))
-        slots.forEach(s=>{if(rolls[s]===maxScore) popDiceNum(document.getElementById(`dice-${s}`))})
+        slots.forEach(s=>{ if(rolls[s]===maxScore) popDiceNum(document.getElementById(`dice-${s}`)) })
         playSound(SFX_DICE)
-        setTimeout(()=>{wrap.style.display="none";resolve()},2000)
+        setTimeout(()=>{ wrap.style.display="none"; resolve() },2000)
       }
     },60)
   })
 }
-
-// 단일 다이스 (기술 사용 시)
-function animateDiceSingle(slot,finalRoll,names) {
+function animateDiceSingle(slot, finalRoll, names) {
   return new Promise(resolve=>{
-    const wrap=document.getElementById("dice-wrap"); if(!wrap){resolve();return}
-    ALL_FS.forEach(s=>{const box=document.getElementById(`dice-box-${s}`);if(box) box.style.display=s===slot?"block":"none"})
+    const wrap=document.getElementById("dice-wrap"); if(!wrap){ resolve(); return }
+    ALL_FS.forEach(s=>{ const box=document.getElementById(`dice-box-${s}`); if(box) box.style.display=s===slot?"block":"none" })
     const nameEl=document.getElementById(`${slot}-name-dice`); if(nameEl) nameEl.innerText=names[slot]??slot
     wrap.style.display="flex"
     const diceEl=document.getElementById(`dice-${slot}`)
     let count=0
     const iv=setInterval(()=>{
       if(diceEl) diceEl.innerText=rollD10(); count++
-      if(count>=16){clearInterval(iv);if(diceEl)diceEl.innerText=finalRoll;popDiceNum(diceEl);playSound(SFX_DICE);setTimeout(()=>{wrap.style.display="none";resolve()},1000)}
+      if(count>=16){ clearInterval(iv); if(diceEl) diceEl.innerText=finalRoll; popDiceNum(diceEl); playSound(SFX_DICE); setTimeout(()=>{ wrap.style.display="none"; resolve() },1000) }
     },60)
   })
 }
@@ -256,33 +178,29 @@ function animateDiceSingle(slot,finalRoll,names) {
 // ── 라운드 배너 ──────────────────────────────────
 function showRoundBanner(roundNum) {
   return new Promise(resolve=>{
-    const banner=document.getElementById("round-banner"),text=document.getElementById("round-banner-text")
-    if(!banner||!text){resolve();return}
+    const banner=document.getElementById("round-banner"), text=document.getElementById("round-banner-text")
+    if(!banner||!text){ resolve(); return }
     text.innerText=`ROUND ${roundNum}`; banner.classList.add("show")
-    setTimeout(()=>{banner.classList.remove("show");resolve()},1800)
+    setTimeout(()=>{ banner.classList.remove("show"); resolve() },1800)
   })
 }
 
-// ── 승리 보상 ─────────────────────────────────────
-async function grantWinCoins(winnerTeam,data) {
-  if(isSpectator||!mySlot) return
-  if(teamOf(mySlot)!==winnerTeam) return
-  try{await updateDoc(doc(db,"users",myUid),{coins:increment(300)});await addLog("🏆 승리 보상으로 300ZP를 받았다!")}
-  catch(e){console.warn("코인 지급 실패",e)}
+function getNamesMap(data) {
+  const m={}; ALL_FS.forEach(s=>{ m[s]=data[`${roomName(s)}_name`]??s }); return m
 }
 
 // ── 인증 & 진입 ──────────────────────────────────
 onAuthStateChanged(auth, async user=>{
   if(!user) return
   myUid=user.uid
-  const roomSnap=await getDoc(roomRef),room=roomSnap.data()
+  const roomSnap=await getDoc(roomRef), room=roomSnap.data()
 
   if(isSpectator){
     mySlot=null
-    const td=document.getElementById("turn-display"); if(td){td.innerText="관전 중";td.style.color="gray"}
-    const lb=document.getElementById("leaveBtn"); if(lb){lb.style.display="inline-block";lb.disabled=false;lb.innerText="관전 종료";lb.onclick=leaveAsSpectator}
+    const td=document.getElementById("turn-display"); if(td){ td.innerText="관전 중"; td.style.color="gray" }
+    const lb=document.getElementById("leaveBtn"); if(lb){ lb.style.display="inline-block"; lb.disabled=false; lb.innerText="관전 종료"; lb.onclick=leaveAsSpectator }
   } else {
-    for(const s of ALL_FS){if(room[`${roomName(s)}_uid`]===myUid){mySlot=s;break}}
+    for(const s of ALL_FS){ if(room[`${roomName(s)}_uid`]===myUid){ mySlot=s; break } }
     window.__myDisplayName=room[`${roomName(mySlot)}_name`]??myUid.slice(0,6)
   }
 
@@ -296,70 +214,52 @@ function listenRoom() {
   onSnapshot(roomRef, async snap=>{
     const data=snap.data(); if(!data) return
 
-    ALL_FS.forEach(s=>{const el=document.getElementById(`${s}-name`);if(el)el.innerText=data[`${roomName(s)}_name`]??"대기..."})
+    ALL_FS.forEach(s=>{ const el=document.getElementById(`${s}-name`); if(el) el.innerText=data[`${roomName(s)}_name`]??"대기..." })
     const spectEl=document.getElementById("spectator-list")
-    if(spectEl){const n=data.spectator_names??[];spectEl.innerText=n.length>0?"관전: "+n.join(", "):""}
+    if(spectEl){ const n=data.spectator_names??[]; spectEl.innerText=n.length>0?"관전: "+n.join(", "):"" }
 
     if(!data.p1_entry||!data.p2_entry||!data.p3_entry||!data.p4_entry) return
 
+    // UI 업데이트
     if(isSpectator){
-      // 관전자: p1→my, p2→ally, p3→enemy1, p4→enemy2 고정 매핑
       updateActiveUI("p1",data,"my"); updateActiveUI("p2",data,"ally")
       updateActiveUI("p3",data,"enemy1"); updateActiveUI("p4",data,"enemy2")
-      const setTag=(pfx,s)=>{const el=document.getElementById(`${pfx}-player-tag`);if(el)el.innerText=data[`${roomName(s)}_name`]??""}
-      setTag("my","p1"); setTag("ally","p2"); setTag("enemy1","p3"); setTag("enemy2","p4")
+      setPlayerTags(data,"p1","p2","p3","p4")
     } else if(mySlot){
-      const ally=allySlot(mySlot),[en1,en2]=enemySlots(mySlot)
+      const ally=allySlot(mySlot)
+      const [en1,en2]=enemySlots(mySlot)
       updateActiveUI(mySlot,data,"my"); updateActiveUI(ally,data,"ally")
       updateActiveUI(en1,data,"enemy1"); updateActiveUI(en2,data,"enemy2")
-      const setTag=(pfx,s)=>{const el=document.getElementById(`${pfx}-player-tag`);if(el)el.innerText=data[`${roomName(s)}_name`]??""}
-      setTag("ally",ally); setTag("enemy1",en1); setTag("enemy2",en2)
+      setPlayerTags(data,mySlot,ally,en1,en2)
     }
 
     // hit 이벤트
     if(data.hit_event&&data.hit_event.ts>lastHitTs){
       lastHitTs=data.hit_event.ts
       const def=data.hit_event.defender
-      let pfx
-      if(isSpectator){
-        // 관전자: p1→my, p2→ally, p3→enemy1, p4→enemy2
-        pfx=def==="p1"?"my":def==="p2"?"ally":def==="p3"?"enemy1":"enemy2"
-      } else if(mySlot){
-        pfx=def===mySlot?"my":def===allySlot(mySlot)?"ally":enemySlots(mySlot).indexOf(def)===0?"enemy1":"enemy2"
-      }
+      const pfx=slotToPrefix(def)
       if(pfx) triggerBlink(pfx)
     }
 
-// 다이스 이벤트 수신 시
+    // 다이스 이벤트
     if(data.dice_event&&data.dice_event.ts>lastDiceTs){
       lastDiceTs=data.dice_event.ts
       const names=getNamesMap(data)
       if(data.dice_event.type==="all"){
-        const slots=data.dice_event.slots??ALL_FS
-        animateAllDice(data.dice_event.rolls,names,slots)
+        animateAllDice(data.dice_event.rolls, names, data.dice_event.slots??ALL_FS)
       } else {
-        animateDiceSingle(data.dice_event.slot,data.dice_event.roll,names)
+        animateDiceSingle(data.dice_event.slot, data.dice_event.roll, names)
       }
     }
 
-    if(data.game_over){showGameOver(data);return}
+    if(data.game_over){ showGameOver(data); return }
 
-    // ── 새로고침 후 첫 수신: Firestore 기준으로 로컬 상태 복구 ──
+    // 첫 스냅샷 복구
     if(isFirstSnapshot){
       isFirstSnapshot=false
       if(!isSpectator&&mySlot){
-        const order=data.current_order??[]
-        const pending=data.pending_switches??[]
-
-        // 내 턴이었으면 actionDone=false로 복구 (다시 조작 가능하게)
-        myTurn=order.length>0&&order[0]===mySlot
+        myTurn = (data.current_order??[])[0]===mySlot
         actionDone=false
-
-        // roundInit: current_order가 비어있고 pending도 없으면
-        // p1이 startRound를 담당해야 하므로 false로 둠
-        roundInit=false
-
-        // forcedSwitch 오버레이 상태 초기화
         forcedSwitchOpen=false
       }
     }
@@ -368,7 +268,7 @@ function listenRoom() {
     if(!data.current_order||data.current_order.length===0){
       const pending=data.pending_switches??[]
 
-      // 내가 교체해야 하는 슬롯인지 확인
+      // 강제 교체 대기 중
       if(!isSpectator&&mySlot&&pending.includes(mySlot)&&!forcedSwitchOpen){
         forcedSwitchOpen=true
         openForcedSwitch(data)
@@ -376,12 +276,9 @@ function listenRoom() {
       }
       if(!isSpectator&&mySlot&&pending.includes(mySlot)) return
 
-      // 모든 교체 완료 후 p1이 라운드 시작
-      // roundInit은 startRound 완료 후 false로 리셋되므로
-      // 여기선 true로만 세팅 (중복 호출 방지)
-      if(!isSpectator&&mySlot==="p1"&&pending.length===0&&!roundInit){
-        roundInit=true
-        startRound(data)  // await 제거 — snapshot 블로킹 방지
+      // 모든 교체 완료 → p1이 라운드 시작 (서버 호출)
+      if(!isSpectator&&mySlot==="p1"&&pending.length===0){
+        callStartRound(data)
       }
       return
     }
@@ -390,308 +287,87 @@ function listenRoom() {
       const nowMyTurn=data.current_order[0]===mySlot
       if(!myTurn&&nowMyTurn) actionDone=false
       myTurn=nowMyTurn
-
-      // 내 턴인데 엔트리 전멸 → 자동으로 턴 넘기기
-      if(myTurn&&!actionDone){
-        const myEntry=data[`${mySlot}_entry`]??[]
-        const allDead=myEntry.every(p=>p.hp<=0)
-        if(allDead){
-          actionDone=true
-          skipTurn(data)
-          return
-        }
-      }
-
-      // 내 턴인데 행동 불능 상태 (풀죽음/마비/얼음) → 자동 처리
-      if(myTurn&&!actionDone){
-        const myActive=data[`${mySlot}_entry`]?.[data[`${mySlot}_active_idx`]??0]
-        if(myActive){
-          const pre=checkPreActionStatus(myActive)
-          if(pre.blocked){
-            actionDone=true
-            autoBlockedTurn(data,pre.msgs)
-            return
-          }
-        }
-      }
     }
+
     updateTurnUI(data)
     updateBenchButtons(data)
     updateMoveButtons(data)
   })
 }
 
-// 엔트리 전멸 시 자동 턴 스킵
-async function skipTurn(data) {
-  const snap=await getDoc(roomRef),fd=snap.data()
-  if(!fd.current_order||fd.current_order[0]!==mySlot){actionDone=false;return}
-  const entries=deepCopyEntries(fd)
-  const {current_order,turn_count,eot}=await advanceTurn(entries,fd)
-  const update={...buildEntryUpdate(entries),current_order,turn_count}
-  if(eot){
-    const {msgs}=applyEndOfTurnDamage([entries.p1,entries.p2,entries.p3,entries.p4])
-    for(const m of msgs){await addLog(m);await wait(280)}
-    Object.assign(update,buildEntryUpdate(entries))
-    const w=checkWin(entries);if(w){await handleWin(w,fd,update);return}
-    update.pending_switches=collectFaintedSlots(entries,fd)
-  }
-  await updateDoc(roomRef,update)
-}
-
-// 풀죽음/마비/얼음 등 행동 불능 시 자동 턴 처리
-async function autoBlockedTurn(data,msgs) {
-  const snap=await getDoc(roomRef),fd=snap.data()
-  if(!fd.current_order||fd.current_order[0]!==mySlot){actionDone=false;return}
-  const entries=deepCopyEntries(fd)
-  const myActive=entries[mySlot][fd[`${mySlot}_active_idx`]??0]
-
-  // 상태 적용 (풀죽음 해제 등)
-  checkPreActionStatus(myActive)
-
-  for(const msg of msgs){await addLog(msg);await wait(350)}
-
-  const {current_order,turn_count,eot}=await advanceTurn(entries,fd)
-  const update={...buildEntryUpdate(entries),current_order,turn_count}
-  if(eot){
-    const {msgs:eotMsgs}=applyEndOfTurnDamage([entries.p1,entries.p2,entries.p3,entries.p4])
-    for(const m of eotMsgs){await addLog(m);await wait(280)}
-    Object.assign(update,buildEntryUpdate(entries))
-    const w=checkWin(entries);if(w){await handleWin(w,fd,update);return}
-    update.pending_switches=collectFaintedSlots(entries,fd)
-  }
-  await updateDoc(roomRef,update)
-}
-
-function getNamesMap(data){const m={};ALL_FS.forEach(s=>{m[s]=data[`${roomName(s)}_name`]??s});return m}
-
-// ── 라운드 시작 ───────────────────────────────────
-// pending_switches 없음 확인 후 호출됨
-async function startRound(data) {
+// ── 서버 함수 호출 래퍼 ──────────────────────────
+let startRoundCalling = false
+async function callStartRound(data) {
+  if(startRoundCalling) return
+  // 이미 라운드 진행 중이면 스킵
+  if(data.current_order&&data.current_order.length>0) return
+  startRoundCalling=true
   try {
-    // 최신 Firestore 데이터로 다시 읽기 (snapshot의 data는 오래됐을 수 있음)
-    const freshSnap=await getDoc(roomRef)
-    const fresh=freshSnap.data()
-
-    // 이미 다른 클라이언트가 current_order를 세팅했으면 중단
-    if(fresh.current_order&&fresh.current_order.length>0){
-      roundInit=false; return
+    const result=await fnStartRound({ roomId: ROOM_ID })
+    if(result.data.ok){
+      const names=getNamesMap(data)
+      // 다이스 애니메이션은 dice_event onSnapshot이 처리
+      await showRoundBanner(result.data.roundNum)
     }
+  } catch(e){
+    console.error("startRound 실패:", e)
+  } finally {
+    startRoundCalling=false
+  }
+}
 
-    const currentRound=fresh.round_count??0
-    const roundNum=currentRound+1
+async function callUseMove(moveIdx, targetSlots) {
+  if(!myTurn||actionDone||gameOver) return
+  actionDone=true
+  updateMoveButtons({}) // 버튼 비활성화
 
-    // 락: round_count를 roundNum으로 올리기 시도
-    await updateDoc(roomRef,{round_count:roundNum})
-    // 확인: 내가 올린 게 맞는지 (동시 시도 시 한 쪽만 통과)
-    const check=await getDoc(roomRef)
-    if((check.data().round_count??0)!==roundNum){
-      roundInit=false; return
-    }
-
-    // 엔트리에 살아있는 포켓몬이 있는 슬롯만 주사위 대상
-    const activeSlots=ALL_FS.filter(s=>fresh[`${s}_entry`]?.some(p=>p.hp>0))
-
-    const rolls={},scores={}
-    activeSlots.forEach(s=>{
-      const pkmn=fresh[`${s}_entry`]?.[fresh[`${s}_active_idx`]??0]
-      const spd=(pkmn?.hp??0)>0?(pkmn?.speed??3):0
-      rolls[s]=rollD10(); scores[s]=spd+rolls[s]
+  try {
+    const result=await fnUseMove({
+      roomId: ROOM_ID,
+      mySlot,
+      moveIdx,
+      targetSlots
     })
-    const order=[...activeSlots].sort((a,b)=>scores[b]-scores[a])
-
-    const names=getNamesMap(fresh)
-    const diceTs=Date.now()
-    await updateDoc(roomRef,{dice_event:{type:"all",rolls,slots:activeSlots,ts:diceTs}})
-    await animateAllDice(rolls,names,activeSlots)
-    await updateDoc(roomRef,{dice_event:null})
-    await showRoundBanner(roundNum)
-    await addLog(`── ROUND ${roundNum} 순서: ${order.map(s=>fresh[`${roomName(s)}_name`]??s).join(" → ")} ──`)
-    await updateDoc(roomRef,{current_order:order})
-    // 성공적으로 완료 후 roundInit 리셋 (다음 라운드 대비)
-    roundInit=false
-  } catch(e) {
-    console.error("startRound 실패, roundInit 해제:", e)
-    roundInit=false
-  }
-}
-
-// ── 턴 진행 ───────────────────────────────────────
-async function advanceTurn(entries,data) {
-  const order=[...data.current_order]
-  order.shift()
-  const turn_count=(data.turn_count??1)+1
-  const eot=order.length===0
-  // roundInit 리셋은 여기서 하지 않음 → startRound 완료 후 처리
-  return {current_order:order,turn_count,eot}
-}
-
-// 라운드 끝날 때 기절 슬롯 수집 → pending_switches
-function collectFaintedSlots(entries,data) {
-  return ALL_FS.filter(s=>{
-    const activeIdx=data[`${s}_active_idx`]??0
-    const pkmn=entries[s][activeIdx]
-    if(!pkmn||pkmn.hp>0) return false  // 기절 아님
-    // 엔트리 전체가 기절이면 pending 불필요 (순서에서 그냥 제외)
-    const hasAnyAlive=entries[s].some(p=>p.hp>0)
-    return hasAnyAlive  // 살아있는 포켓몬이 있을 때만 교체 대기
-  })
-}
-
-// ── 게임 오버 ─────────────────────────────────────
-function showGameOver(data) {
-  gameOver=true
-  const td=document.getElementById("turn-display")
-  if(isSpectator){if(td){td.innerText=`🏆 팀${data.winner_team} 승리!`;td.style.color="gold"}}
-  else{const win=teamOf(mySlot)===data.winner_team;if(td){td.innerText=win?"🏆 우리 팀의 승리!":"💀 패배...";td.style.color=win?"gold":"red"}}
-  for(let i=0;i<4;i++){const b=document.getElementById(`move-btn-${i}`);if(b){b.disabled=true;b.onclick=null}}
-  const bench=document.getElementById("bench-container");if(bench)bench.innerHTML=""
-  if(!isSpectator){const lb=document.getElementById("leaveBtn");if(lb){lb.style.display="inline-block";lb.disabled=false;lb.innerText="방 나가기";lb.onclick=leaveGame}}
-}
-
-async function leaveAsSpectator(){
-  const snap=await getDoc(roomRef),data=snap.data()
-  await updateDoc(roomRef,{spectators:(data.spectators??[]).filter(u=>u!==myUid),spectator_names:(data.spectator_names??[]).filter((_,i)=>(data.spectators??[])[i]!==myUid)})
-  location.href="../main.html"
-}
-async function leaveGame(){
-  clearLogState()
-  const reset={game_started:false,game_over:false,winner_team:null,current_order:[],turn_count:0,round_count:0,dice_event:null,hit_event:null,background:null,pending_switches:[]}
-  ALL_FS.forEach(s=>{const rs=roomName(s);reset[`${rs}_uid`]=null;reset[`${rs}_name`]=null;reset[`${rs}_ready`]=false;reset[`${s}_entry`]=null;reset[`${s}_active_idx`]=0})
-  reset.spectators=[];reset.spectator_names=[]
-  await updateDoc(roomRef,reset); location.href="../main.html"
-}
-
-// ── Active UI ────────────────────────────────────
-function updateActiveUI(fsSlot,data,prefix){
-  const activeIdx=data[`${fsSlot}_active_idx`]??0,pkmn=data[`${fsSlot}_entry`]?.[activeIdx]
-  if(!pkmn) return
-  const st=pkmn.status?` [${statusName(pkmn.status)}]`:"",cf=(pkmn.confusion??0)>0?" [혼란]":""
-  const nameEl=document.getElementById(`${prefix}-active-name`); if(nameEl) nameEl.innerText=pkmn.name+st+cf
-  updateHpBar(`${prefix}-hp-bar`,`${prefix}-active-hp`,pkmn.hp,pkmn.maxHp,prefix==="my")
-  updatePortrait(prefix,pkmn)
-}
-function updateTurnUI(data){
-  const el=document.getElementById("turn-display"),tc=document.getElementById("turn-count")
-  if(el){
-    if(isSpectator){
-      const cur=data.current_order?.[0]
-      el.innerText=cur?`${data[`${roomName(cur)}_name`]??cur}의 턴`:"대기 중"
-      el.style.color="gray"
-    } else {
-      el.innerText=myTurn?"내 턴!":"상대 턴...";el.style.color=myTurn?"green":"gray"
+    if(!result.data.ok){
+      actionDone=false
     }
-  }
-  if(tc) tc.innerText=`라운드 ${data.round_count??1}`
-}
-
-// ── 기술 버튼 ────────────────────────────────────
-const typeColors={"노말":"#949495","불":"#e56c3e","물":"#5185c5","전기":"#fbb917","풀":"#66a945","얼음":"#6dc8eb","격투":"#e09c40","독":"#735198","땅":"#9c7743","바위":"#bfb889","비행":"#a2c3e7","에스퍼":"#dd6b7b","벌레":"#9fa244","고스트":"#684870","드래곤":"#535ca8","악":"#4c4948","강철":"#69a9c7","페어리":"#dab4d4"}
-
-function updateMoveButtons(data){
-  if(isSpectator||!mySlot) return
-  const myPkmn=data[`${mySlot}_entry`]?.[data[`${mySlot}_active_idx`]??0]
-  const fainted=!myPkmn||myPkmn.hp<=0,movesArr=myPkmn?.moves??[]
-  for(let i=0;i<4;i++){
-    const btn=document.getElementById(`move-btn-${i}`); if(!btn) continue
-    if(i>=movesArr.length){btn.innerHTML='<span style="font-size:13px;">-</span>';btn.disabled=true;btn.onclick=null;continue}
-    const move=movesArr[i],moveInfo=moves[move.name]
-    const accText=moveInfo?.alwaysHit?"필중":`${moveInfo?.accuracy??100}%`
-    btn.innerHTML=`<span style="display:block;font-size:13px;font-weight:bold;">${move.name}</span><span style="display:block;font-size:10px;opacity:0.85;">PP: ${move.pp} | ${accText}</span>`
-    const color=typeColors[moveInfo?.type]??"#a0a0a0"
-    btn.style.setProperty("--btn-color",color);btn.style.background=color;btn.style.boxShadow=`inset 0 0 0 2px white,0 0 0 2px ${color}`
-    if(fainted||move.pp<=0||!myTurn||actionDone){btn.disabled=true;btn.onclick=null}
-    else{btn.disabled=false;btn.onclick=()=>{playSound(SFX_BTN);openTargetSelect(i,data)}}
+  } catch(e){
+    console.error("useMove 실패:", e)
+    actionDone=false
+    updateMoveButtons(await (await getDoc(roomRef)).data())
   }
 }
-function updateBenchButtons(data){
-  if(isSpectator||!mySlot) return
-  const bench=document.getElementById("bench-container"); bench.innerHTML=""
-  const myEntry=data[`${mySlot}_entry`],activeIdx=data[`${mySlot}_active_idx`]??0
-  myEntry.forEach((pkmn,idx)=>{
-    if(idx===activeIdx) return
-    const btn=document.createElement("button")
-    if(pkmn.hp<=0){btn.innerHTML=`<span class="bench-name">${pkmn.name}</span><span class="bench-hp">기절</span>`;btn.disabled=true}
-    else{btn.innerHTML=`<span class="bench-name">${pkmn.name}</span><span class="bench-hp">HP: ${pkmn.hp}/${pkmn.maxHp}</span>`;btn.disabled=!myTurn||actionDone;btn.onclick=()=>{playSound(SFX_BTN);switchPokemon(idx)}}
-    bench.appendChild(btn)
-  })
+
+async function callSwitchPokemon(newIdx) {
+  if(!myTurn||actionDone||gameOver) return
+  actionDone=true
+  try {
+    await fnSwitchPokemon({ roomId: ROOM_ID, mySlot, newIdx })
+  } catch(e){
+    console.error("switchPokemon 실패:", e)
+    actionDone=false
+  }
 }
 
-function openForcedSwitch(data) {
-  if(gameOver) return
-  const myEntry=data[`${mySlot}_entry`]
-  const activeIdx=data[`${mySlot}_active_idx`]??0
-  const aliveIdxs=myEntry.map((p,i)=>i).filter(i=>i!==activeIdx&&myEntry[i].hp>0)
-
-  // 벤치에 살아있는 포켓몬 없음 → pending에서 내 슬롯 제거하고 자동 통과
-  if(aliveIdxs.length===0){
+async function callForcedSwitch(newIdx, data) {
+  try {
+    const result=await fnForcedSwitch({ roomId: ROOM_ID, mySlot, newIdx })
+    if(result.data.ok){
+      forcedSwitchOpen=false
+      // 로그 추가 (강제 교체 메시지는 서버에서 안 써줘서 클라이언트가)
+      const myName=data[`${roomName(mySlot)}_name`]
+      const snap=await getDoc(roomRef), fd=snap.data()
+      const next=fd[`${mySlot}_entry`]?.[newIdx]?.name??""
+      await addDoc(logsRef,{text:`${myName}${josa(myName,"은는")} ${next}${josa(next,"을를")} 내보냈다!`,ts:Date.now()})
+    }
+  } catch(e){
+    console.error("forcedSwitch 실패:", e)
     forcedSwitchOpen=false
-    const snap=getDoc(roomRef).then(s=>{
-      const fd=s.data()
-      if(!(fd.pending_switches??[]).includes(mySlot)) return
-      const newPending=(fd.pending_switches??[]).filter(s=>s!==mySlot)
-      updateDoc(roomRef,{pending_switches:newPending})
-    })
-    return
   }
-
-  const overlay=document.getElementById("target-overlay")
-  const btnWrap=document.getElementById("target-buttons")
-  if(!overlay||!btnWrap){ forcedSwitchOpen=false; return }
-  btnWrap.innerHTML=""
-
-  const title=overlay.querySelector("h3")
-  if(title) title.innerText="포켓몬을 내보내!"
-
-  aliveIdxs.forEach(idx=>{
-    const p=myEntry[idx]
-    const btn=document.createElement("button")
-    btn.className="target-btn"
-    btn.style.background="#4a9eff"
-    btn.innerText=`${p.name}  HP: ${p.hp}/${p.maxHp}`
-    btn.onclick=async()=>{
-      overlay.classList.remove("show")
-      if(title) title.innerText="누구에게 사용할까?"
-      await forcedSwitch(idx, data)
-    }
-    btnWrap.appendChild(btn)
-  })
-
-  const cancelBtn=document.getElementById("target-cancel-btn")
-  if(cancelBtn) cancelBtn.style.display="none"
-  overlay.classList.add("show")
-}
-
-async function forcedSwitch(newIdx, data) {
-  if(gameOver) return
-
-  const snap=await getDoc(roomRef), fd=snap.data()
-  if(!(fd.pending_switches??[]).includes(mySlot)){
-    forcedSwitchOpen=false; return
-  }
-
-  const entries=deepCopyEntries(fd)
-  const myName=fd[`${roomName(mySlot)}_name`]
-  const next=entries[mySlot][newIdx].name
-
-  await addLog(`${myName}${josa(myName,"은는")} ${next}${josa(next,"을를")} 내보냈다!`)
-
-  const cancelBtn=document.getElementById("target-cancel-btn")
-  if(cancelBtn) cancelBtn.style.display=""
-  const title=document.querySelector("#target-overlay h3")
-  if(title) title.innerText="누구에게 사용할까?"
-
-  forcedSwitchOpen=false  // 교체 완료 → 플래그 해제
-
-  const newPending=(fd.pending_switches??[]).filter(s=>s!==mySlot)
-  await updateDoc(roomRef,{
-    ...buildEntryUpdate(entries),
-    [`${mySlot}_active_idx`]: newIdx,
-    pending_switches: newPending
-  })
 }
 
 // ── 타겟 선택 오버레이 ───────────────────────────
-function openTargetSelect(moveIdx,data){
+function openTargetSelect(moveIdx, data) {
   if(!mySlot) return
   const myPkmn=data[`${mySlot}_entry`][data[`${mySlot}_active_idx`]??0]
   const moveData=myPkmn.moves[moveIdx]
@@ -702,238 +378,182 @@ function openTargetSelect(moveIdx,data){
   const allyS=allySlot(mySlot)
   const allyPkmn=data[`${allyS}_entry`]?.[data[`${allyS}_active_idx`]??0]
 
-  const overlay=document.getElementById("target-overlay"),btnWrap=document.getElementById("target-buttons")
+  const overlay=document.getElementById("target-overlay"), btnWrap=document.getElementById("target-buttons")
   if(!overlay||!btnWrap) return
   btnWrap.innerHTML=""
 
-  function makeBtn(label,slots){
+  function makeBtn(label, slots) {
     const btn=document.createElement("button"); btn.className="target-btn"; btn.innerText=label
-    btn.onclick=()=>{overlay.classList.remove("show");useMove(moveIdx,data,slots)}
+    btn.onclick=()=>{ overlay.classList.remove("show"); callUseMove(moveIdx,slots) }
     btnWrap.appendChild(btn)
   }
 
-  // 범위기: 살아있는 적 전원 자동
+  // 범위기
   if(moveInfo?.targetAll){
     const targets=[]; if(e1&&e1.hp>0) targets.push(en1); if(e2&&e2.hp>0) targets.push(en2)
-    useMove(moveIdx,data,targets); return
+    callUseMove(moveIdx, targets); return
   }
 
-  // 아군 대상 기술
+  // 아군 대상
   if(moveInfo?.targetAlly){
     makeBtn(`나 (${myPkmn.name})`,[mySlot])
     if(allyPkmn&&allyPkmn.hp>0) makeBtn(`동료 (${allyPkmn.name})`,[allyS])
     overlay.classList.add("show")
-    document.getElementById("target-cancel-btn").onclick=()=>{overlay.classList.remove("show");actionDone=false}
+    document.getElementById("target-cancel-btn").onclick=()=>{ overlay.classList.remove("show"); actionDone=false }
     return
   }
 
-  // 단일 적 대상
+  // 단일 적
   const aliveEnemies=[]
   if(e1&&e1.hp>0) aliveEnemies.push({s:en1,pkmn:e1})
   if(e2&&e2.hp>0) aliveEnemies.push({s:en2,pkmn:e2})
+  if(aliveEnemies.length===0){ callUseMove(moveIdx,[]); return }
+  if(aliveEnemies.length===1){ callUseMove(moveIdx,[aliveEnemies[0].s]); return }
 
-  if(aliveEnemies.length===0){useMove(moveIdx,data,[]);return}
-  if(aliveEnemies.length===1){useMove(moveIdx,data,[aliveEnemies[0].s]);return}
+  aliveEnemies.forEach(({s,pkmn})=>{ makeBtn(`${data[`${roomName(s)}_name`]??s}의 ${pkmn.name}`,[s]) })
+  overlay.classList.add("show")
+  document.getElementById("target-cancel-btn").onclick=()=>{ overlay.classList.remove("show"); actionDone=false }
+}
 
-  // 둘 다 살아있을 때만 선택지 표시
-  aliveEnemies.forEach(({s,pkmn})=>{
-    makeBtn(`${data[`${roomName(s)}_name`]??s}의 ${pkmn.name}`,[s])
+// ── 강제 교체 오버레이 ───────────────────────────
+function openForcedSwitch(data) {
+  if(gameOver) return
+  const myEntry=data[`${mySlot}_entry`]
+  const activeIdx=data[`${mySlot}_active_idx`]??0
+  const aliveIdxs=myEntry.map((_,i)=>i).filter(i=>i!==activeIdx&&myEntry[i].hp>0)
+
+  if(aliveIdxs.length===0){
+    forcedSwitchOpen=false
+    fnForcedSwitch({ roomId:ROOM_ID, mySlot, newIdx: activeIdx }).catch(console.error)
+    return
+  }
+
+  const overlay=document.getElementById("target-overlay"), btnWrap=document.getElementById("target-buttons")
+  if(!overlay||!btnWrap){ forcedSwitchOpen=false; return }
+  btnWrap.innerHTML=""
+
+  const title=overlay.querySelector("h3"); if(title) title.innerText="포켓몬을 내보내!"
+  const cancelBtn=document.getElementById("target-cancel-btn"); if(cancelBtn) cancelBtn.style.display="none"
+
+  aliveIdxs.forEach(idx=>{
+    const p=myEntry[idx]
+    const btn=document.createElement("button"); btn.className="target-btn"
+    btn.style.background="#4a9eff"
+    btn.innerText=`${p.name}  HP: ${p.hp}/${p.maxHp}`
+    btn.onclick=async()=>{
+      overlay.classList.remove("show")
+      if(title) title.innerText="누구에게 사용할까?"
+      if(cancelBtn) cancelBtn.style.display=""
+      await callForcedSwitch(idx, data)
+    }
+    btnWrap.appendChild(btn)
   })
   overlay.classList.add("show")
-  document.getElementById("target-cancel-btn").onclick=()=>{overlay.classList.remove("show");actionDone=false}
 }
 
-// ── 교체 ─────────────────────────────────────────
-async function switchPokemon(newIdx){
-  if(!myTurn||actionDone||gameOver) return
-  actionDone=true
-  const snap=await getDoc(roomRef),data=snap.data()
-  const entries=deepCopyEntries(data)
-  const myName=data[`${roomName(mySlot)}_name`]
-  const prev=entries[mySlot][data[`${mySlot}_active_idx`]??0].name
-  const next=entries[mySlot][newIdx].name
-  await addLog(`돌아와, ${prev}!`); await wait(300)
-  await addLog(`${myName}${josa(myName,"은는")} ${next}${josa(next,"을를")} 내보냈다!`)
-
-  const {current_order,turn_count,eot}=await advanceTurn(entries,data)
-  entries[mySlot][newIdx]  // 교체 후 hp 체크는 실제 index 업데이트 후
-  const update={...buildEntryUpdate(entries),[`${mySlot}_active_idx`]:newIdx,current_order,turn_count}
-  if(eot){
-    const {msgs}=applyEndOfTurnDamage([entries.p1,entries.p2,entries.p3,entries.p4])
-    for(const m of msgs){await addLog(m);await wait(280)}
-    Object.assign(update,buildEntryUpdate(entries))
-    const w=checkWin(entries); if(w){await handleWin(w,data,update);return}
-    const pending=collectFaintedSlots(entries,data)
-    update.pending_switches=pending
+// ── UI 업데이트 ──────────────────────────────────
+function slotToPrefix(slot) {
+  if(isSpectator){
+    return slot==="p1"?"my": slot==="p2"?"ally": slot==="p3"?"enemy1": "enemy2"
   }
-  await updateDoc(roomRef,update)
+  if(!mySlot) return null
+  const [en1,en2]=enemySlots(mySlot)
+  return slot===mySlot?"my": slot===allySlot(mySlot)?"ally": slot===en1?"enemy1": "enemy2"
 }
 
-// ── 기술 사용 ────────────────────────────────────
-async function useMove(moveIdx,data,targetSlots){
-  if(!myTurn||actionDone||gameOver) return
-  actionDone=true; updateMoveButtons(data)
+function setPlayerTags(data, myS, allyS, en1S, en2S) {
+  const tags={my:myS, ally:allyS, enemy1:en1S, enemy2:en2S}
+  Object.entries(tags).forEach(([pfx,s])=>{
+    const el=document.getElementById(`${pfx}-player-tag`)
+    if(el) el.innerText=data[`${roomName(s)}_name`]??""
+  })
+}
 
-  const snap=await getDoc(roomRef),fd=snap.data()
-  const entries=deepCopyEntries(fd)
-  const myActiveIdx=fd[`${mySlot}_active_idx`]??0
-  const myPkmn=entries[mySlot][myActiveIdx]
-  const myName=fd[`${roomName(mySlot)}_name`]
+function updateActiveUI(fsSlot, data, prefix) {
+  const activeIdx=data[`${fsSlot}_active_idx`]??0, pkmn=data[`${fsSlot}_entry`]?.[activeIdx]
+  if(!pkmn) return
+  const st=pkmn.status?` [${statusName(pkmn.status)}]`:"", cf=(pkmn.confusion??0)>0?" [혼란]":""
+  const nameEl=document.getElementById(`${prefix}-active-name`); if(nameEl) nameEl.innerText=pkmn.name+st+cf
+  updateHpBar(`${prefix}-hp-bar`,`${prefix}-active-hp`,pkmn.hp,pkmn.maxHp,prefix==="my")
+  updatePortrait(prefix,pkmn)
+}
 
-  if(myPkmn.hp<=0){actionDone=false;return}
-  const moveData=myPkmn.moves[moveIdx]
-  if(!moveData||moveData.pp<=0){actionDone=false;return}
-
-  // 선행 상태이상
-  const pre=checkPreActionStatus(myPkmn)
-  for(const msg of pre.msgs){await addLog(msg);await wait(350)}
-  if(pre.blocked){
-    const {current_order,turn_count,eot}=await advanceTurn(entries,fd)
-    const update={...buildEntryUpdate(entries),current_order,turn_count}
-    if(eot){const {msgs}=applyEndOfTurnDamage([entries.p1,entries.p2,entries.p3,entries.p4]);for(const m of msgs){await addLog(m);await wait(280)};Object.assign(update,buildEntryUpdate(entries));const w=checkWin(entries);if(w){await handleWin(w,fd,update);return};update.pending_switches=collectFaintedSlots(entries,fd)}
-    await updateDoc(roomRef,update); return
-  }
-
-  // 혼란
-  const conf=checkConfusion(myPkmn)
-  for(const msg of conf.msgs){await addLog(msg);await wait(350)}
-  if(conf.selfHit){
-    const {current_order,turn_count,eot}=await advanceTurn(entries,fd)
-    const update={...buildEntryUpdate(entries),current_order,turn_count}
-    if(eot){const {msgs}=applyEndOfTurnDamage([entries.p1,entries.p2,entries.p3,entries.p4]);for(const m of msgs){await addLog(m);await wait(280)};Object.assign(update,buildEntryUpdate(entries));const w=checkWin(entries);if(w){await handleWin(w,fd,update);return};update.pending_switches=collectFaintedSlots(entries,fd)}
-    await updateDoc(roomRef,update); return
-  }
-
-  myPkmn.moves[moveIdx]={...moveData,pp:moveData.pp-1}
-  const moveInfo=moves[moveData.name]
-  await addLog(`${myPkmn.name}의 ${moveData.name}!`); await wait(300)
-
-  // 다이스
-  const diceRoll=rollD10(),diceTs=Date.now()
-  await updateDoc(roomRef,{dice_event:{type:"single",slot:mySlot,roll:diceRoll,ts:diceTs}})
-  await animateDiceSingle(mySlot,diceRoll,getNamesMap(fd))
-  await updateDoc(roomRef,{dice_event:null})
-
-  // 타겟별 처리
-  for(const tSlot of targetSlots){
-    const tActiveIdx=fd[`${tSlot}_active_idx`]??0
-    const tPkmn=entries[tSlot][tActiveIdx]
-    if(!tPkmn||tPkmn.hp<=0) continue
-
-    const [en1,en2]=enemySlots(mySlot)
-    const tPrefix=tSlot===mySlot?"my":tSlot===allySlot(mySlot)?"ally":tSlot===en1?"enemy1":"enemy2"
-    const myPrefix=TEAM_A.includes(mySlot)?"my":"ally"
-
-    if(!moveInfo?.power){
-      // 변화기
-      const r=moveInfo?.rank
-      const toEnemy=r&&(r.targetAtk!==undefined||r.targetDef!==undefined||r.targetSpd!==undefined)
-      if(toEnemy){const {hit,hitType}=calcHit(myPkmn,moveInfo,tPkmn);if(!hit){await addLog(hitType==="evaded"?`${tPkmn.name}에게는 맞지 않았다!`:`빗나갔다!`);continue}}
-      const rankMsgs=applyRankChanges(moveInfo?.rank??null,myPkmn,tPkmn)
-      for(const msg of rankMsgs){await addLog(msg);await wait(300)}
+function updateTurnUI(data) {
+  const el=document.getElementById("turn-display"), tc=document.getElementById("turn-count")
+  if(el){
+    if(isSpectator){
+      const cur=data.current_order?.[0]
+      el.innerText=cur?`${data[`${roomName(cur)}_name`]??cur}의 턴`:"대기 중"
+      el.style.color="gray"
     } else {
-      // 공격기
-      await triggerAttackEffect(myPrefix,tPrefix)
-      const {hit,hitType}=calcHit(myPkmn,moveInfo,tPkmn)
-      if(!hit){
-        if(hitType==="evaded"){showBattlePopup(tPrefix,"evade");await addLog(`${tPkmn.name}에게는 맞지 않았다!`)}
-        else await addLog(`빗나갔다!`)
-      } else {
-        const atkRank=getActiveRank(myPkmn,"atk"),defRank=getActiveRank(tPkmn,"def")
-        const {damage,multiplier,stab,dice,critical}=calcDamage(myPkmn,moveData.name,tPkmn,atkRank,defRank)
-        if(multiplier===0){await addLog(`${tPkmn.name}에게는 효과가 없다…`)}
-        else{
-          await updateDoc(roomRef,{hit_event:{defender:tSlot,ts:Date.now()}})
-          triggerBlink(tPrefix)
-          await updateDoc(roomRef,{hit_event:null})
-          tPkmn.hp=Math.max(0,tPkmn.hp-damage); await wait(400)
-          if(multiplier>1){await addLog("효과가 굉장했다!");await wait(280)}
-          if(multiplier<1){await addLog("효과가 별로인 듯하다…");await wait(280)}
-          if(critical){showBattlePopup(tPrefix,"critical");await addLog("급소에 맞았다!");await wait(280)}
-          const effectMsgs=applyMoveEffect(moveInfo?.effect,myPkmn,tPkmn,damage)
-          for(const msg of effectMsgs){await addLog(msg);await wait(280)}
-          if(moveInfo?.rank){const rMsgs=applyRankChanges(moveInfo.rank,myPkmn,tPkmn);for(const msg of rMsgs){await addLog(msg);await wait(280)}}
-          if(tPkmn.hp<=0){await addLog(`${tPkmn.name}${josa(tPkmn.name,"은는")} 쓰러졌다!`);await wait(300)}
-        }
-      }
+      el.innerText=myTurn?"내 턴!":"상대 턴..."; el.style.color=myTurn?"green":"gray"
     }
   }
-
-  const expiredMsgs=tickMyRanks(myPkmn)
-  for(const msg of expiredMsgs){await addLog(msg);await wait(250)}
-
-  // 즉시 승리 체크
-  const winNow=checkWin(entries)
-
-  const {current_order,turn_count,eot}=await advanceTurn(entries,fd)
-  const update={...buildEntryUpdate(entries),current_order,turn_count}
-
-  if(eot&&!winNow){
-    const {msgs:eotMsgs}=applyEndOfTurnDamage([entries.p1,entries.p2,entries.p3,entries.p4])
-    for(const msg of eotMsgs){await addLog(msg);await wait(280)}
-    Object.assign(update,buildEntryUpdate(entries))
-    const w=checkWin(entries); if(w){await handleWin(w,fd,update);return}
-    // 기절 슬롯 pending_switches 세팅
-    const pending=collectFaintedSlots(entries,fd)
-    update.pending_switches=pending
-  }
-
-  if(winNow){await handleWin(winNow,fd,update);return}
-  await updateDoc(roomRef,update)
+  if(tc) tc.innerText=`라운드 ${data.round_count??1}`
 }
 
-// ── 승리 체크 / 처리 ─────────────────────────────
-function checkWin(entries){
-  const teamAAllDead=entries.p1.every(p=>p.hp<=0)&&entries.p2.every(p=>p.hp<=0)
-  const teamBAllDead=entries.p3.every(p=>p.hp<=0)&&entries.p4.every(p=>p.hp<=0)
-  if(teamAAllDead) return "B"
-  if(teamBAllDead) return "A"
-  return null
-}
-async function handleWin(winTeam,data,partialUpdate){
-  const update={...(partialUpdate??{}),game_over:true,winner_team:winTeam,current_order:[]}
-  await updateDoc(roomRef,update)
-  await grantWinCoins(winTeam,data)
-  await addLog(`🏆 팀${winTeam}의 승리!`)
-  // p1만 게임 기록 저장 (중복 방지)
-  if(!isSpectator&&mySlot==="p1") await saveGameRecord(winTeam,data)
-}
+const typeColors={"노말":"#949495","불":"#e56c3e","물":"#5185c5","전기":"#fbb917","풀":"#66a945","얼음":"#6dc8eb","격투":"#e09c40","독":"#735198","땅":"#9c7743","바위":"#bfb889","비행":"#a2c3e7","에스퍼":"#dd6b7b","벌레":"#9fa244","고스트":"#684870","드래곤":"#535ca8","악":"#4c4948","강철":"#69a9c7","페어리":"#dab4d4"}
 
-// ── 게임 기록 저장 ────────────────────────────────
-// main.js 구조와 동일: double/{ROOM_ID}/games/{gameId}
-// { p1, p2, winner, logs: [{text,ts}], createdAt }
-async function saveGameRecord(winTeam,data){
-  try {
-    const logSnap=await getDocs(query(logsRef,orderBy("ts")))
-    const logs=logSnap.docs.map(d=>({text:d.data().text,ts:d.data().ts}))
-
-    const teamANames=[data.player1_name,data.player2_name].filter(Boolean).join(" & ")
-    const teamBNames=[data.player3_name,data.player4_name].filter(Boolean).join(" & ")
-    const winnerName=winTeam==="A"?teamANames:teamBNames
-
-    const gamesRef=collection(db,"double",ROOM_ID,"games")
-    await addDoc(gamesRef,{
-      p1: teamANames,   // 기존 main.js: p1 = player1 이름
-      p2: teamBNames,   // 기존 main.js: p2 = player2 이름
-      winner: winnerName,
-      logs,
-      createdAt: Date.now()
-    })
-
-    // 저장 후 logs 서브컬렉션 정리
-    await Promise.all(logSnap.docs.map(d=>deleteDoc(d.ref)))
-  } catch(e){
-    console.warn("게임 기록 저장 실패",e)
+function updateMoveButtons(data) {
+  if(isSpectator||!mySlot) return
+  const myPkmn=data[`${mySlot}_entry`]?.[data[`${mySlot}_active_idx`]??0]
+  const fainted=!myPkmn||myPkmn.hp<=0, movesArr=myPkmn?.moves??[]
+  for(let i=0;i<4;i++){
+    const btn=document.getElementById(`move-btn-${i}`); if(!btn) continue
+    if(i>=movesArr.length){ btn.innerHTML='<span style="font-size:13px;">-</span>'; btn.disabled=true; btn.onclick=null; continue }
+    const move=movesArr[i], moveInfo=moves[move.name]
+    const accText=moveInfo?.alwaysHit?"필중":`${moveInfo?.accuracy??100}%`
+    btn.innerHTML=`<span style="display:block;font-size:13px;font-weight:bold;">${move.name}</span><span style="display:block;font-size:10px;opacity:0.85;">PP: ${move.pp} | ${accText}</span>`
+    const color=typeColors[moveInfo?.type]??"#a0a0a0"
+    btn.style.setProperty("--btn-color",color); btn.style.background=color; btn.style.boxShadow=`inset 0 0 0 2px white,0 0 0 2px ${color}`
+    if(fainted||move.pp<=0||!myTurn||actionDone){ btn.disabled=true; btn.onclick=null }
+    else { btn.disabled=false; btn.onclick=()=>{ playSound(SFX_BTN); openTargetSelect(i,data) } }
   }
 }
 
-// ── 유틸 ─────────────────────────────────────────
-function deepCopyEntries(data){
-  const e={}
-  ALL_FS.forEach(s=>{e[s]=(data[`${s}_entry`]??[]).map(p=>({...p,moves:(p.moves??[]).map(m=>({...m})),ranks:{...defaultRanks(),...(p.ranks??{})}}))})
-  return e
+function updateBenchButtons(data) {
+  if(isSpectator||!mySlot) return
+  const bench=document.getElementById("bench-container"); bench.innerHTML=""
+  const myEntry=data[`${mySlot}_entry`], activeIdx=data[`${mySlot}_active_idx`]??0
+  myEntry.forEach((pkmn,idx)=>{
+    if(idx===activeIdx) return
+    const btn=document.createElement("button")
+    if(pkmn.hp<=0){ btn.innerHTML=`<span class="bench-name">${pkmn.name}</span><span class="bench-hp">기절</span>`; btn.disabled=true }
+    else {
+      btn.innerHTML=`<span class="bench-name">${pkmn.name}</span><span class="bench-hp">HP: ${pkmn.hp}/${pkmn.maxHp}</span>`
+      btn.disabled=!myTurn||actionDone
+      btn.onclick=()=>{ playSound(SFX_BTN); callSwitchPokemon(idx) }
+    }
+    bench.appendChild(btn)
+  })
 }
-function buildEntryUpdate(entries){const u={};ALL_FS.forEach(s=>{u[`${s}_entry`]=entries[s]});return u}
 
-// ── 채팅 위임 ─────────────────────────────────────
-function initChat(){if(typeof window.initDoubleChat==="function")window.initDoubleChat({db,ROOM_ID,myUid,mySlot,isSpectator})}
+// ── 게임 오버 ─────────────────────────────────────
+function showGameOver(data) {
+  gameOver=true
+  const td=document.getElementById("turn-display")
+  if(isSpectator){ if(td){ td.innerText=`🏆 팀${data.winner_team} 승리!`; td.style.color="gold" } }
+  else { const win=teamOf(mySlot)===data.winner_team; if(td){ td.innerText=win?"🏆 우리 팀의 승리!":"💀 패배..."; td.style.color=win?"gold":"red" } }
+  for(let i=0;i<4;i++){ const b=document.getElementById(`move-btn-${i}`); if(b){ b.disabled=true; b.onclick=null } }
+  const bench=document.getElementById("bench-container"); if(bench) bench.innerHTML=""
+  if(!isSpectator){ const lb=document.getElementById("leaveBtn"); if(lb){ lb.style.display="inline-block"; lb.disabled=false; lb.innerText="방 나가기"; lb.onclick=leaveGame } }
+}
+
+async function leaveAsSpectator() {
+  const snap=await getDoc(roomRef), data=snap.data()
+  await updateDoc(roomRef,{spectators:(data.spectators??[]).filter(u=>u!==myUid),spectator_names:(data.spectator_names??[]).filter((_,i)=>(data.spectators??[])[i]!==myUid)})
+  location.href="../main.html"
+}
+async function leaveGame() {
+  clearLogState()
+  const reset={game_started:false,game_over:false,winner_team:null,current_order:[],turn_count:0,round_count:0,dice_event:null,hit_event:null,background:null,pending_switches:[]}
+  ALL_FS.forEach(s=>{ const rs=roomName(s); reset[`${rs}_uid`]=null; reset[`${rs}_name`]=null; reset[`${rs}_ready`]=false; reset[`${s}_entry`]=null; reset[`${s}_active_idx`]=0 })
+  reset.spectators=[]; reset.spectator_names=[]
+  await updateDoc(roomRef,reset); location.href="../main.html"
+}
+
+// ── 채팅 ─────────────────────────────────────────
+function initChat() {
+  if(typeof window.initDoubleChat==="function")
+    window.initDoubleChat({db, ROOM_ID, myUid, mySlot, isSpectator})
+}
