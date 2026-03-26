@@ -94,7 +94,7 @@ function showBattlePopup(prefix, type) {
   const wrap=document.getElementById(`${prefix}-pokemon-area`); if(!wrap) return
   const el=document.createElement("div"); el.className=`battle-popup ${type}`; el.innerText=type==="critical"?"급소!":"회피!"
   wrap.appendChild(el); void el.offsetWidth; el.classList.add("show")
-  el.addEventListener("animationend",()=>el.remove(),{once:true})
+  el.addEventer("animationend",()=>el.remove(),{once:true})
 }
 
 // ── 로그 ─────────────────────────────────────────
@@ -268,6 +268,7 @@ function listenRoom() {
     // current_order 없음 = 라운드 시작 대기
     if(!data.current_order||data.current_order.length===0){
       const pending=data.pending_switches??[]
+      console.log("체크:", { isSpectator, mySlot, pendingLen: pending.length })
 
       // 강제 교체 대기 중
       if(!isSpectator&&mySlot&&pending.includes(mySlot)&&!forcedSwitchOpen){
