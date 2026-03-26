@@ -214,6 +214,19 @@ function listenRoom() {
   onSnapshot(roomRef, async snap=>{
     const data=snap.data(); if(!data) return
 
+    onSnapshot(roomRef, async snap=>{
+  const data = snap.data(); if(!data) return
+
+  // ← 이거 임시로 추가
+  console.log("entry 상태:", {
+    p1: data.p1_entry,
+    p2: data.p2_entry,
+    p3: data.p3_entry,
+    p4: data.p4_entry,
+    mySlot,
+    current_order: data.current_order
+  })
+
     ALL_FS.forEach(s=>{ const el=document.getElementById(`${s}-name`); if(el) el.innerText=data[`${roomName(s)}_name`]??"대기..." })
     const spectEl=document.getElementById("spectator-list")
     if(spectEl){ const n=data.spectator_names??[]; spectEl.innerText=n.length>0?"관전: "+n.join(", "):"" }
