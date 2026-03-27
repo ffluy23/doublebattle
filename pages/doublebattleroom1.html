@@ -3,211 +3,102 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>배틀룸 1 - 대기실</title>
+  <link rel="stylesheet" href="../css/style.css">
+  <title>Double Battle Room 1</title>
   <style>
-
-    @import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css");
-
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-
-    body {
-      background: #f0f2f5;
-      color: #1a1a1a;
-      font-family: "Pretendard", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      padding: 24px 16px;
-    }
-
-    h1 {
-      font-size: clamp(18px, 4vw, 28px);
-      color: #2a6496;
-      margin-bottom: 24px;
-      letter-spacing: 2px;
-      text-align: center;
-    }
-
-    .room-container {
-      width: 100%;
-      max-width: 600px;
-      display: flex;
-      flex-direction: column;
-      gap: 16px;
-    }
-
-    /* 팀 박스 */
     .team-box {
-      background: #fff;
-      border: 2px solid #dde3ec;
-      border-radius: 10px;
-      padding: 16px;
-    }
-
-    .team-box.team-a { border-color: #2a6496; }
-    .team-box.team-b { border-color: #e05555; }
-
-    .team-label {
-      font-size: 13px;
-      font-weight: bold;
-      letter-spacing: 1px;
+      display: flex;
+      gap: 10px;
       margin-bottom: 10px;
     }
-    .team-a .team-label { color: #2a6496; }
-    .team-b .team-label { color: #c0392b; }
-
+    .team {
+      flex: 1;
+      border: 1px solid #444;
+      border-radius: 8px;
+      padding: 10px 14px;
+    }
+    .team-label {
+      font-size: 11px;
+      color: #888;
+      margin-bottom: 8px;
+      letter-spacing: .1em;
+    }
     .player-row {
       display: flex;
+      justify-content: space-between;
       align-items: center;
-      gap: 10px;
-      padding: 8px 10px;
-      background: #f7f9fc;
-      border-radius: 6px;
-      margin-bottom: 6px;
-      font-size: 14px;
-    }
-    .player-row:last-child { margin-bottom: 0; }
-
-    .player-slot-label {
-      color: #888;
-      font-size: 12px;
-      min-width: 56px;
-    }
-
-    .player-name {
-      flex: 1;
-      color: #1a1a1a;
-    }
-
-
-
-    /* 관전자 */
-    .spectator-box {
-      background: #fff;
-      border: 1px solid #dde3ec;
-      border-radius: 8px;
-      padding: 12px 16px;
       font-size: 13px;
-      color: #888;
+      margin: 5px 0;
     }
-
-    /* 교체 요청 */
-    #swap-request-display {
-      background: #fff;
-      border: 1px solid #f0a500;
-      border-radius: 8px;
-      padding: 12px 16px;
-      font-size: 13px;
-      color: #a06000;
-      display: none;
-    }
-    #swap-request-display:not(:empty) { display: block; }
-    #swap-request-display button {
-      margin-top: 8px;
-      margin-right: 8px;
-      padding: 4px 14px;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-      font-size: 12px;
-    }
-    #swap-request-display button:first-of-type { background: #4a9eff; color: #fff; }
-    #swap-request-display button:last-of-type  { background: #bbb; color: #fff; }
-
-    /* 버튼들 */
+    .ready-icon { font-size: 14px; }
     .btn-row {
       display: flex;
-      gap: 10px;
+      gap: 8px;
+      margin-top: 10px;
       flex-wrap: wrap;
     }
-
-    button {
-      padding: 10px 22px;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
-      font-family: inherit;
-      font-size: 14px;
-      font-weight: bold;
-      transition: opacity 0.15s;
+    #spectator-list {
+      margin-top: 10px;
+      font-size: 12px;
+      color: #888;
     }
-    button:disabled { opacity: 0.4; cursor: not-allowed; }
-
-    #readyBtn  { background: #4a9eff; color: #fff; }
-    #swapBtn   { background: #f0a500; color: #fff; }
-    #leaveBtn  { background: #bbb; color: #fff; }
-
-    .vs-divider {
-      text-align: center;
-      font-size: 20px;
-      color: #c0392b;
-      font-weight: bold;
-      letter-spacing: 4px;
+    @media (max-width: 480px) {
+      .team-box { flex-direction: column; }
+      .btn-row  { justify-content: center; }
     }
   </style>
 </head>
 <body>
-
-<h1>⚔ BATTLE ROOM 1</h1>
-
-<div class="room-container">
-
-  <!-- 팀A -->
-  <div class="team-box team-a">
-    <div class="team-label">🔵 팀 A</div>
-    <div class="player-row">
-      <span class="player-slot-label">Player 1</span>
-      <span class="player-name" id="player1">대기...</span>
-
-    </div>
-    <div class="player-row">
-      <span class="player-slot-label">Player 2</span>
-      <span class="player-name" id="player2">대기...</span>
-
-    </div>
+<div class="container">
+  <div class="header">
+    <div class="title">ZENITH RING</div>
   </div>
-
-  <div class="vs-divider">VS</div>
-
-  <!-- 팀B -->
-  <div class="team-box team-b">
-    <div class="team-label">🔴 팀 B</div>
-    <div class="player-row">
-      <span class="player-slot-label">Player 3</span>
-      <span class="player-name" id="player3">대기...</span>
-
+  <div class="screen">
+    <div class="screen-top">
+      <span>DOUBLE v1.0</span>
+      <div class="status">ONLINE</div>
+      <div class="battery"><div class="battery-level"></div></div>
     </div>
-    <div class="player-row">
-      <span class="player-slot-label">Player 4</span>
-      <span class="player-name" id="player4">대기...</span>
 
+    <h2>Double Battle Room 1</h2>
+
+    <div class="team-box">
+      <div class="team">
+        <div class="team-label">🔵 TEAM A</div>
+        <div class="player-row">
+          <span id="player1">Player1: 대기 중...</span>
+          <span class="ready-icon" id="player1-ready">⬜</span>
+        </div>
+        <div class="player-row">
+          <span id="player2">Player2: 대기 중...</span>
+          <span class="ready-icon" id="player2-ready">⬜</span>
+        </div>
+      </div>
+      <div class="team">
+        <div class="team-label">🔴 TEAM B</div>
+        <div class="player-row">
+          <span id="player3">Player3: 대기 중...</span>
+          <span class="ready-icon" id="player3-ready">⬜</span>
+        </div>
+        <div class="player-row">
+          <span id="player4">Player4: 대기 중...</span>
+          <span class="ready-icon" id="player4-ready">⬜</span>
+        </div>
+      </div>
     </div>
+
+    <div class="btn-row">
+      <button class="btn" id="readyBtn">Ready</button>
+      <button class="btn" id="swapBtn" style="display:none">자리 이동</button>
+      <button class="btn" id="leaveBtn">Leave</button>
+    </div>
+
+    <div id="spectator-list">관전자 없음</div>
   </div>
-
-  <!-- 관전자 -->
-  <div class="spectator-box" id="spectator-list">관전자 없음</div>
-
-  <!-- 교체 요청 -->
-  <div id="swap-request-display"></div>
-
-  <!-- 팀 라벨 (JS용) -->
-  <div style="display:none" id="team-a-label"></div>
-  <div style="display:none" id="team-b-label"></div>
-
-  <!-- 버튼 -->
-  <div class="btn-row">
-    <button id="readyBtn">준비 완료</button>
-    <button id="swapBtn" style="display:none">자리 교체</button>
-    <button id="leaveBtn">나가기</button>
-  </div>
-
+  <div class="footer">Made by Sonnet with Ampharos</div>
 </div>
 
-<script>
-  window.ROOM_ID = "doublebattleroom1"
-</script>
-<script type="module" src="../js/battleroom.js"></script>
-
+<script>const ROOM_ID = "doublebattleroom1"</script>
+<script type="module" src="../js/doublebattleroom.js"></script>
 </body>
 </html>
