@@ -12,36 +12,43 @@
 //   자신 대상: atk / def / spd (양수 = 랭크업)
 //   상대 대상: targetAtk / targetDef / targetSpd (음수 = 랭크다운)
 //   chance: 발동 확률 (없으면 100%)
-//   turns: 지속 턴 (없으면 기본 2턴)
+//   turns: 지속 턴
+//     ※ 랭크 전용 기술(power:0): turns:1 → 칼춤→칼춤→딜 구조
+//     ※ 공격 부가효과 랭크: turns:2 → 다음 턴까지 유지
 //   ※ power: 0 → 자신 대상이면 accuracy만 판정, 상대 대상이면 회피까지 판정
 //   ※ power > 0 → 데미지 후 rank가 있으면 확률적으로 추가 적용
 
 export const moves = {
-  // ───── 랭크 기술 ─────
+  // ───── 랭크 전용 기술 (turns:1 — 연속 사용 시 중첩, 다른 행동 시 소멸) ─────
   "칼춤":     { power: 0, type: "노말", accuracy: 100, alwaysHit: true, effect: null,
-                rank: { atk: 3 } },
+                rank: { atk: 3, turns: 1 } },
   "코튼가드": { power: 0, type: "노말", accuracy: 100, alwaysHit: true, effect: null,
-                rank: { def: 2 } },
+                rank: { def: 2, turns: 1 } },
   "고속이동": { power: 0, type: "노말", accuracy: 100, alwaysHit: true, effect: null,
-                rank: { spd: 3 } },
+                rank: { spd: 3, turns: 1 } },
+  "명상":     { power: 0, type: "에스퍼", accuracy: 100, alwaysHit: true, effect: null,
+                rank: { atk: 1, def: 1, turns: 1 } },
 
   // ───── 노말 ─────
-  "전광석화":       { power: 30, type: "노말", accuracy: 100, alwaysHit: true,  effect: null },
-  "몸통박치기":     { power: 40, type: "노말", accuracy: 100, alwaysHit: false, effect: { chance: 0.3, volatile: "풀죽음" } },
-  "하이퍼보이스":   { power: 40, type: "노말", accuracy: 100, alwaysHit: false, effect: null },
-  "할퀴기":         { power: 40, type: "노말", accuracy: 100, alwaysHit: false, effect: null },
-  "속이기":         { power: 30, type: "노말", accuracy: 50, alwaysHit: false, skipEvasion: true, effect: { chance: 1, volatile: "풀죽음" }},
-  "울음소리":       { power: 0, type: "노말", accuracy: 100, alwaysHit: false, effect: null, rank: { targetAtk: -1 } },
-  "뽐내기":         { power: 0, type: "노말", accuracy: 85, alwaysHit: false, effect: null, rank: { targetAtk: 2 }, effect: { chance: 1, volatile: "혼란" } },
+  "전광석화":   { power: 30, type: "노말", accuracy: 100, alwaysHit: true,  effect: null },
+  "몸통박치기": { power: 40, type: "노말", accuracy: 100, alwaysHit: false, effect: { chance: 0.3, volatile: "풀죽음" } },
+  "하이퍼보이스": { power: 40, type: "노말", accuracy: 100, alwaysHit: false, effect: null },
+  "할퀴기":     { power: 40, type: "노말", accuracy: 100, alwaysHit: false, effect: null },
+  "속이기":     { power: 30, type: "노말", accuracy: 50, alwaysHit: false, skipEvasion: true,
+                  effect: { chance: 1, volatile: "풀죽음" } },
+  "울음소리":   { power: 0, type: "노말", accuracy: 100, alwaysHit: false, effect: null,
+                  rank: { targetAtk: -1, turns: 2 } },
+  "뽐내기":     { power: 0, type: "노말", accuracy: 85, alwaysHit: false,
+                  rank: { targetAtk: 2, turns: 2 }, effect: { chance: 1, volatile: "혼란" } },
 
   // ───── 불 ─────
-  "화염방사": { power: 50, type: "불", accuracy: 100, alwaysHit: false, effect: { chance: 0.1, status: "화상" } },
-  "불꽃엄니": { power: 40, type: "불", accuracy: 100, alwaysHit: false, effect: { chance: 0.1, status: "화상" } },
-  "열풍":     { power: 40, type: "불", accuracy: 100, alwaysHit: false, effect: { chance: 0.1, status: "화상" } },
-  "불대문자": { power: 40, type: "불", accuracy: 85,  alwaysHit: false, effect: null },
-  "불꽃세례": { power: 40, type: "불", accuracy: 100, alwaysHit: false, effect: { chance: 0.1, status: "화상" } },
-  "매지컬플레임": { power: 45, type: "불", accuracy: 100, alwaysHit: false, effect: null, rank: { targetAtk: -1 } },
-
+  "화염방사":     { power: 50, type: "불", accuracy: 100, alwaysHit: false, effect: { chance: 0.1, status: "화상" } },
+  "불꽃엄니":     { power: 40, type: "불", accuracy: 100, alwaysHit: false, effect: { chance: 0.1, status: "화상" } },
+  "열풍":         { power: 40, type: "불", accuracy: 100, alwaysHit: false, effect: { chance: 0.1, status: "화상" } },
+  "불대문자":     { power: 40, type: "불", accuracy: 85,  alwaysHit: false, effect: null },
+  "불꽃세례":     { power: 40, type: "불", accuracy: 100, alwaysHit: false, effect: { chance: 0.1, status: "화상" } },
+  "매지컬플레임": { power: 45, type: "불", accuracy: 100, alwaysHit: false, effect: null,
+                    rank: { targetAtk: -1, turns: 2 } },
 
   // ───── 물 ─────
   "거품광선":     { power: 40, type: "물", accuracy: 100, alwaysHit: false, effect: null },
@@ -52,12 +59,12 @@ export const moves = {
   "아쿠아제트":   { power: 40, type: "물", accuracy: 100, alwaysHit: false, effect: null },
 
   // ───── 전기 ─────
-  "번개펀치": { power: 40, type: "전기", accuracy: 100, alwaysHit: false, effect: { chance: 0.1, status: "마비" } },
-  "10만볼트": { power: 50, type: "전기", accuracy: 100, alwaysHit: false, effect: { chance: 0.3, status: "마비" } },
-  "방전":     { power: 40, type: "전기", accuracy: 100, alwaysHit: false, effect: { chance: 0.3, volatile: "풀죽음" } },
-  "번개":     { power: 60, type: "전기", accuracy: 70,  alwaysHit: false, effect: { chance: 0.3, status: "마비" } },
-  "전기쇼크": { power: 40, type: "전기", accuracy: 100, alwaysHit: false, effect: { chance: 0.1, status: "마비" } },
-  "전기자석파": { power: 0, type: "전기", accuracy: 90, alwaysHit: false, effect: { chance: 1, status: "마비" } },
+  "번개펀치":   { power: 40, type: "전기", accuracy: 100, alwaysHit: false, effect: { chance: 0.1, status: "마비" } },
+  "10만볼트":   { power: 50, type: "전기", accuracy: 100, alwaysHit: false, effect: { chance: 0.3, status: "마비" } },
+  "방전":       { power: 40, type: "전기", accuracy: 100, alwaysHit: false, effect: { chance: 0.3, volatile: "풀죽음" } },
+  "번개":       { power: 60, type: "전기", accuracy: 70,  alwaysHit: false, effect: { chance: 0.3, status: "마비" } },
+  "전기쇼크":   { power: 40, type: "전기", accuracy: 100, alwaysHit: false, effect: { chance: 0.1, status: "마비" } },
+  "전기자석파": { power: 0, type: "전기", accuracy: 90, alwaysHit: false, targetSelf: false, effect: { chance: 1, status: "마비" } },
 
   // ───── 풀 ─────
   "에너지볼":   { power: 40, type: "풀", accuracy: 100, alwaysHit: false, effect: null },
@@ -86,29 +93,30 @@ export const moves = {
   "땅가르기": { power: 40, type: "땅", accuracy: 100, alwaysHit: false, effect: null },
 
   // ───── 바위 ─────
-  "스톤에지":   { power: 40, type: "바위", accuracy: 80, alwaysHit: false, effect: null },
-  "바위깨기":   { power: 30, type: "바위", accuracy: 80, alwaysHit: false, effect: null, rank: { targetDef: -1 } },
-  "파워젬":     { power: 50, type: "바위", accuracy: 80, alwaysHit: false, effect: null },
-  "록블라스트": { power: 40, type: "바위", accuracy: 90, alwaysHit: false, effect: null },
-  "원시의힘":   { power: 40, type: "바위", accuracy: 100, alwaysHit: false, effect: null, rank: { chance: 0.1, atk: 1, def: 1, spd: 1 } },
+  "스톤에지":   { power: 40, type: "바위", accuracy: 80,  alwaysHit: false, effect: null },
+  "바위깨기":   { power: 30, type: "바위", accuracy: 80,  alwaysHit: false, effect: null,
+                  rank: { targetDef: -1, turns: 2 } },
+  "파워젬":     { power: 50, type: "바위", accuracy: 80,  alwaysHit: false, effect: null },
+  "록블라스트": { power: 40, type: "바위", accuracy: 90,  alwaysHit: false, effect: null },
+  "원시의힘":   { power: 40, type: "바위", accuracy: 100, alwaysHit: false, effect: null,
+                  rank: { chance: 0.1, atk: 1, def: 1, spd: 1, turns: 2 } },
 
   // ───── 비행 ─────
   "에어슬래시": { power: 40, type: "비행", accuracy: 95,  alwaysHit: false, effect: { chance: 0.3, volatile: "풀죽음" } },
   "열풍비행":   { power: 40, type: "비행", accuracy: 100, alwaysHit: false, effect: { chance: 0.1, status: "화상" } },
-  "쪼기":   { power: 40, type: "비행", accuracy: 100, alwaysHit: false, effect: null },
-  
+  "쪼기":       { power: 40, type: "비행", accuracy: 100, alwaysHit: false, effect: null },
 
   // ───── 에스퍼 ─────
   "사이코키네시스": { power: 40, type: "에스퍼", accuracy: 100, alwaysHit: false, effect: null },
   "미래예지":       { power: 40, type: "에스퍼", accuracy: 100, alwaysHit: false, effect: null },
-  "명상":           { power: 0, type: "에스퍼", accuracy: 100, alwaysHit: true, effect: null, rank: { chance: 1, atk: 1, def: 1} },
 
   // ───── 벌레 ─────
   "버그버즈":   { power: 40, type: "벌레", accuracy: 100, alwaysHit: false, effect: null },
   "시저크로스": { power: 40, type: "벌레", accuracy: 100, alwaysHit: false, effect: null },
 
   // ───── 고스트 ─────
-  "섀도볼":     { power: 50, type: "고스트", accuracy: 100, alwaysHit: false, effect: null, rank: { targetDef: -1 } },
+  "섀도볼":     { power: 50, type: "고스트", accuracy: 100, alwaysHit: false, effect: null,
+                  rank: { targetDef: -1, turns: 2 } },
   "나이트헤드": { power: 40, type: "고스트", accuracy: 100, alwaysHit: true,  effect: null },
   "섀도스니크": { power: 40, type: "고스트", accuracy: 100, alwaysHit: false, effect: null },
 
@@ -119,11 +127,14 @@ export const moves = {
   // ───── 악 ─────
   "악의파동": { power: 50, type: "악", accuracy: 100, alwaysHit: false, effect: { chance: 0.2, volatile: "풀죽음" } },
   "암타":     { power: 40, type: "악", accuracy: 100, alwaysHit: false, effect: null },
-  "바크아웃":     { power: 0, type: "악", accuracy: 95, alwaysHit: false, effect: null, rank: { targetAtk: -1 } },
+  "바크아웃": { power: 0,  type: "악", accuracy: 95,  alwaysHit: false, effect: null,
+                rank: { targetAtk: -1, turns: 2 } },
 
   // ───── 강철 ─────
-  "아이언테일": { power: 50, type: "강철", accuracy: 75, alwaysHit: false, effect: null, rank: { chance: 0.3, targetDef: -1 } },
-  "메탈크로우": { power: 40, type: "강철", accuracy: 95,  alwaysHit: false, effect: null, rank: { chance: 0.1, atk: 1 } },
+  "아이언테일": { power: 50, type: "강철", accuracy: 75,  alwaysHit: false, effect: null,
+                  rank: { chance: 0.3, targetDef: -1, turns: 2 } },
+  "메탈크로우": { power: 40, type: "강철", accuracy: 95,  alwaysHit: false, effect: null,
+                  rank: { chance: 0.1, atk: 1, turns: 2 } },
   "불릿펀치":   { power: 40, type: "강철", accuracy: 100, alwaysHit: false, effect: null },
   "플래시캐논": { power: 40, type: "강철", accuracy: 100, alwaysHit: true,  effect: null },
 
