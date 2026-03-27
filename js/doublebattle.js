@@ -9,15 +9,12 @@ import { moves } from "./moves.js"
 import { josa } from "./effecthandler.js"
 
 // ── Firebase Functions 연결 ──────────────────────
-const functions = getFunctions(undefined, "us-central1")
+const functions      = getFunctions()
 const _startRound    = httpsCallable(functions, "startRound")
 const _useMove       = httpsCallable(functions, "useMove")
 const _switchPkmn    = httpsCallable(functions, "switchPokemon")
 const _forcedSwitch  = httpsCallable(functions, "forcedSwitch")
 const _skipTurn      = httpsCallable(functions, "skipTurn")
-const _requestAssist = httpsCallable(functions, "requestAssist")
-const _acceptAssist  = httpsCallable(functions, "acceptAssist")
-const _rejectAssist  = httpsCallable(functions, "rejectAssist")
 
 const roomRef = doc(db, "double", ROOM_ID)
 const logsRef = collection(db, "double", ROOM_ID, "logs")
@@ -452,9 +449,10 @@ function updateAssistUI(data) {
   const myTeam    = teamOf(mySlot)
   const assistKey = `assist_team${myTeam}`
   const usedKey   = `assist_used_${myTeam}`
+  const reqKey    = `assist_request_${myTeam}`  // 팀별 분리
   const assist    = data[assistKey] ?? null
   const used      = data[usedKey] ?? false
-  const req       = data.assist_request ?? null
+  const req       = data[reqKey] ?? null
 
   // 요청 버튼
   const reqBtn = $("assist-request-btn")
@@ -470,7 +468,7 @@ function updateAssistUI(data) {
     }
   }
 
-  // 어시스트 상태 표시 (내 칸에)
+  // 어시스트 상태 표시
   const statusEl = $("assist-status")
   if(statusEl) {
     if(assist?.requester === mySlot) {
@@ -500,16 +498,17 @@ function updateAssistUI(data) {
 async function doRequestAssist() {
   try {
     const { updateDoc } = await import("https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js")
-    const snap = await getDoc(roomRef)
-    const data = snap.data()
+    const snap   = await getDoc(roomRef)
+    const data   = snap.data()
     const myTeam = teamOf(mySlot)
-    if(data[`assist_used_${myTeam}`]) { alert("이미 어시스트를 사용했어!"); return }
-    if(data[`assist_team${myTeam}`])  { alert("이미 어시스트가 활성화됨"); return }
-    if(data.assist_request)           { alert("이미 요청 중"); return }
+    const reqKey = `assist_request_${myTeam}`
+    if(data[`assist_used_${myTeam}`])  { alert("이미 어시스트를 사용했어!"); return }
+    if(data[`assist_team${myTeam}`])   { alert("이미 어시스트가 활성화됨"); return }
+    if(data[reqKey])                   { alert("이미 요청 중"); return }
     const myName = data[`${mySlot.replace("p","player")}_name`] ?? mySlot
     const ally   = allyOf(mySlot)
     await updateDoc(roomRef, {
-      assist_request: { from: mySlot, fromName: myName, to: ally, ts: Date.now() }
+      [reqKey]: { from: mySlot, fromName: myName, to: ally, ts: Date.now() }
     })
   } catch(e) { alert(`어시스트 요청 실패: ${e.message}`) }
 }
@@ -517,25 +516,30 @@ async function doRequestAssist() {
 async function doAcceptAssist() {
   try {
     const { updateDoc, addDoc } = await import("https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js")
-    const snap = await getDoc(roomRef)
-    const data = snap.data()
-    const req  = data.assist_request
+    const snap   = await getDoc(roomRef)
+    const data   = snap.data()
+    const myTeam = teamOf(mySlot)
+    const reqKey = `assist_request_${myTeam}`
+    const req    = data[reqKey]
     if(!req || req.to !== mySlot) return
-    const myTeam  = teamOf(mySlot)
-    const myName  = data[`${mySlot.replace("p","player")}_name`] ?? mySlot
+    const myName = data[`${mySlot.replace("p","player")}_name`] ?? mySlot
     await updateDoc(roomRef, {
-      [`assist_team${myTeam}`]: { requester: req.from, requesterName: req.fromName, supporter: mySlot, supporterName: myName },
+      [`assist_team${myTeam}`]:  { requester: req.from, requesterName: req.fromName, supporter: mySlot, supporterName: myName },
       [`assist_used_${myTeam}`]: true,
-      assist_request: null
+      [reqKey]:                  null
     })
-    await addDoc(logsRef, { text: `🤝 ${req.fromName}${josa(req.fromName,"과와")} ${myName}${josa(myName,"이가")} 어시스트를 맺었다!`, ts: Date.now() })
+    await addDoc(logsRef, {
+      text: `🤝 ${req.fromName}${josa(req.fromName,"과와")} ${myName}${josa(myName,"이가")} 어시스트를 맺었다!`,
+      ts: Date.now()
+    })
   } catch(e) { alert(`수락 실패: ${e.message}`) }
 }
 
 async function doRejectAssist() {
   try {
     const { updateDoc } = await import("https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js")
-    await updateDoc(roomRef, { assist_request: null })
+    const myTeam = teamOf(mySlot)
+    await updateDoc(roomRef, { [`assist_request_${myTeam}`]: null })
   } catch(e) { console.warn("거절 실패:", e.message) }
 }
 
@@ -564,7 +568,7 @@ async function leaveGame() {
       p3_entry: null, p3_active_idx: 0,
       p4_entry: null, p4_active_idx: 0,
       hit_event: null, dice_event: null,
-      assist_request: null,
+      assist_request_A: null, assist_request_B: null,
       assist_teamA: null, assist_teamB: null,
       assist_used_A: false, assist_used_B: false
     })
