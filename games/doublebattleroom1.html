@@ -198,6 +198,37 @@
     }
     #chat-send-btn:hover { background: #45a049; }
 
+    /* ── ASSIST! 애니메이션 ── */
+    #assist-anim {
+      position: fixed;
+      top: 40%;
+      left: -400px;
+      font-size: clamp(40px, 8vw, 72px);
+      font-weight: 900;
+      color: #fff;
+      letter-spacing: 4px;
+      text-shadow:
+        0 0 10px #00eaff,
+        0 0 20px #00eaff,
+        0 0 40px #00eaff;
+      transform: skew(-10deg) scale(0.8);
+      opacity: 0;
+      pointer-events: none;
+      z-index: 9999;
+      font-family: 'Mona12', sans-serif;
+    }
+    .assist-show {
+      animation: juicyAssist 1.2s cubic-bezier(.2,1.5,.5,1) forwards;
+    }
+    @keyframes juicyAssist {
+      0%   { left: -400px; opacity: 0; transform: scale(0.6) skew(-10deg); }
+      30%  { left: 45%; opacity: 1; transform: scale(1.3) skew(-10deg); }
+      45%  { left: 42%; transform: scale(1.1) skew(-10deg); }
+      60%  { left: 45%; transform: scale(1.2) skew(-10deg); }
+      75%  { transform: scale(1.4) skew(-10deg); }
+      100% { left: 45%; opacity: 0; transform: scale(1.8) skew(-10deg); }
+    }
+
     /* ── 어시스트 ── */
     #assist-section {
       display: flex; flex-direction: column; gap: 4px; margin-top: 4px;
@@ -313,6 +344,7 @@
 </head>
 <body>
 <div id="battle-wrapper">
+<div id="assist-anim">ASSIST!</div>
 <div id="battle-screen">
 
   <!-- 팀 라벨 -->
