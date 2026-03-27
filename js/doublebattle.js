@@ -9,7 +9,7 @@ import { moves } from "./moves.js"
 import { josa } from "./effecthandler.js"
 
 // ── Firebase Functions 연결 ──────────────────────
-const functions      = getFunctions()
+const functions = getFunctions(undefined, "us-central1")
 const _startRound    = httpsCallable(functions, "startRound")
 const _useMove       = httpsCallable(functions, "useMove")
 const _switchPkmn    = httpsCallable(functions, "switchPokemon")
