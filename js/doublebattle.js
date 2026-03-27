@@ -281,10 +281,17 @@ function exitTargetMode() {
 async function doUseMove(moveIdx, targetSlots, data) {
   if(actionDone) return
   actionDone = true
-  console.log("doUseMove 호출:", { moveIdx, targetSlots, mySlot, ROOM_ID }) // ← 이 줄 추가
+  console.log("doUseMove 호출:", { moveIdx, targetSlots, mySlot, ROOM_ID })
   updateMoveButtons(data)
   try {
     await _useMove({ roomId: ROOM_ID, mySlot, moveIdx, targetSlots })
+  } catch(e) {
+    console.error("useMove 오류:", e.message)
+    actionDone = false
+    updateMoveButtons(data)
+  }
+}
+
 // ── 교체 버튼 ────────────────────────────────────
 function updateBenchButtons(data) {
   const bench     = $("bench-container")
