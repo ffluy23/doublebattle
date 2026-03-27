@@ -198,7 +198,30 @@
     }
     #chat-send-btn:hover { background: #45a049; }
 
-    /* ── 배틀 로그 ── */
+    /* ── 어시스트 ── */
+    #assist-section {
+      display: flex; flex-direction: column; gap: 4px; margin-top: 4px;
+    }
+    #assist-request-btn {
+      padding: 5px 10px; font-size: 11px; border-radius: 6px;
+      border: 1.5px solid #3498db; background: transparent;
+      color: #3498db; cursor: pointer; font-family: inherit;
+      transition: background .15s, color .15s;
+    }
+    #assist-request-btn:not(:disabled):hover { background: #3498db; color: #fff; }
+    #assist-request-btn:disabled { opacity: .5; cursor: not-allowed; }
+    #assist-status { font-size: 10px; min-height: 14px; }
+    #assist-popup {
+      font-size: 11px; padding: 6px 8px;
+      border: 1px solid #e67e22; border-radius: 6px;
+      background: #fff8f0; display: flex; flex-direction: column; gap: 4px;
+    }
+    #assist-popup button {
+      padding: 3px 8px; font-size: 11px; border-radius: 4px;
+      border: none; cursor: pointer; font-family: inherit;
+    }
+    #assist-popup button:first-of-type { background: #27ae60; color: #fff; }
+    #assist-popup button:last-of-type  { background: #e74c3c; color: #fff; }
     #battle-bottom { display: flex; flex-direction: column; gap: 6px; }
     #battle-log {
       width: 100%; height: 140px; overflow-y: auto;
@@ -354,6 +377,16 @@
         <div id="chat-input-row">
           <input id="chat-input" type="text" placeholder="팀원에게..." maxlength="200">
           <button id="chat-send-btn">전송</button>
+        </div>
+      </div>
+      <!-- 어시스트 -->
+      <div id="assist-section">
+        <button id="assist-request-btn" onclick="window.__doRequestAssist()">지원 요청</button>
+        <div id="assist-status"></div>
+        <div id="assist-popup" style="display:none">
+          <span id="assist-popup-name"></span>님의 지원 요청
+          <button onclick="window.__doAcceptAssist()">수락</button>
+          <button onclick="window.__doRejectAssist()">거절</button>
         </div>
       </div>
     </div>
