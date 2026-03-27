@@ -260,9 +260,10 @@ function enterTargetMode(idx, data) {
     if(!area) return
     area.classList.add("target-selectable")
     area.onclick = () => {
-      exitTargetMode()
-      doUseMove(pendingMoveIdx, [eSlot], data)
-    }
+  const idx = pendingMoveIdx
+  exitTargetMode()
+  doUseMove(idx, [eSlot], data)
+}
   })
 }
 
