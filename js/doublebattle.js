@@ -9,11 +9,15 @@ import { moves } from "./moves.js"
 import { josa } from "./effecthandler.js"
 
 // ── Firebase Functions 연결 ──────────────────────
-const functions    = getFunctions()
-const _startRound  = httpsCallable(functions, "startRound")
-const _useMove     = httpsCallable(functions, "useMove")
-const _switchPkmn  = httpsCallable(functions, "switchPokemon")
-const _forcedSwitch = httpsCallable(functions, "forcedSwitch")
+const functions      = getFunctions()
+const _startRound    = httpsCallable(functions, "startRound")
+const _useMove       = httpsCallable(functions, "useMove")
+const _switchPkmn    = httpsCallable(functions, "switchPokemon")
+const _forcedSwitch  = httpsCallable(functions, "forcedSwitch")
+const _skipTurn      = httpsCallable(functions, "skipTurn")
+const _requestAssist = httpsCallable(functions, "requestAssist")
+const _acceptAssist  = httpsCallable(functions, "acceptAssist")
+const _rejectAssist  = httpsCallable(functions, "rejectAssist")
 
 const roomRef = doc(db, "double", ROOM_ID)
 const logsRef = collection(db, "double", ROOM_ID, "logs")
@@ -255,7 +259,6 @@ function onMoveClick(idx, moveInfo, data) {
   const r = moveInfo?.rank
   const targetsEnemy = moveInfo?.power
     || (r && (r.targetAtk!==undefined || r.targetDef!==undefined || r.targetSpd!==undefined))
-  || moveInfo?.targetSelf === false
 
   if(targetsEnemy) {
     enterTargetMode(idx, data)
@@ -435,14 +438,86 @@ function showGameOver(data) {
 }
 
 // ── 턴 스킵 (엔트리 전멸 시) ────────────────────
-const _skipTurn = httpsCallable(functions, "skipTurn")
-
 async function doSkipTurn() {
   try {
     await _skipTurn({ roomId: ROOM_ID, mySlot })
   } catch(e) {
     console.warn("skipTurn 오류:", e.message)
     actionDone = false
+  }
+}
+
+// ── 어시스트 UI ──────────────────────────────────
+function updateAssistUI(data) {
+  const myTeam    = teamOf(mySlot)
+  const assistKey = `assist_team${myTeam}`
+  const usedKey   = `assist_used_${myTeam}`
+  const assist    = data[assistKey] ?? null
+  const used      = data[usedKey] ?? false
+  const req       = data.assist_request ?? null
+
+  // 요청 버튼
+  const reqBtn = $("assist-request-btn")
+  if(reqBtn) {
+    if(isSpectator || used || assist || req) {
+      reqBtn.disabled = true
+      reqBtn.innerText = assist
+        ? `🤝 어시스트 중`
+        : used ? "지원 완료" : req ? "요청 중..." : "지원 요청"
+    } else {
+      reqBtn.disabled = false
+      reqBtn.innerText = "지원 요청"
+    }
+  }
+
+  // 어시스트 상태 표시 (내 칸에)
+  const statusEl = $("assist-status")
+  if(statusEl) {
+    if(assist?.requester === mySlot) {
+      statusEl.innerText = `🤝 어시스트 대기 중 (${assist.supporterName})`
+      statusEl.style.color = "#e67e22"
+    } else if(assist?.supporter === mySlot) {
+      statusEl.innerText = `🤝 어시스트 지원 중 (${assist.requesterName})`
+      statusEl.style.color = "#3498db"
+    } else {
+      statusEl.innerText = ""
+    }
+  }
+
+  // 수락/거절 팝업 (내가 to인 요청이 있을 때)
+  const popup = $("assist-popup")
+  if(popup) {
+    if(req && req.to === mySlot && !isSpectator) {
+      popup.style.display = "block"
+      const nameEl = $("assist-popup-name")
+      if(nameEl) nameEl.innerText = req.fromName ?? req.from
+    } else {
+      popup.style.display = "none"
+    }
+  }
+}
+
+async function doRequestAssist() {
+  try {
+    await _requestAssist({ roomId: ROOM_ID, mySlot })
+  } catch(e) {
+    alert(`어시스트 요청 실패: ${e.message}`)
+  }
+}
+
+async function doAcceptAssist() {
+  try {
+    await _acceptAssist({ roomId: ROOM_ID, mySlot })
+  } catch(e) {
+    alert(`수락 실패: ${e.message}`)
+  }
+}
+
+async function doRejectAssist() {
+  try {
+    await _rejectAssist({ roomId: ROOM_ID })
+  } catch(e) {
+    console.warn("거절 실패:", e.message)
   }
 }
 
@@ -470,7 +545,10 @@ async function leaveGame() {
       p2_entry: null, p2_active_idx: 0,
       p3_entry: null, p3_active_idx: 0,
       p4_entry: null, p4_active_idx: 0,
-      hit_event: null, dice_event: null
+      hit_event: null, dice_event: null,
+      assist_request: null,
+      assist_teamA: null, assist_teamB: null,
+      assist_used_A: false, assist_used_B: false
     })
   } catch(e) {
     console.error("방 초기화 실패:", e)
@@ -563,6 +641,7 @@ function listenRoom() {
     updateTurnUI(data)
     updateMoveButtons(data)
     updateBenchButtons(data)
+    if(!isSpectator) updateAssistUI(data)
   })
 }
 
@@ -594,3 +673,8 @@ onAuthStateChanged(auth, async user => {
   listenLogs()
   listenRoom()
 })
+
+// HTML onclick에서 접근할 수 있도록 window에 등록
+window.__doRequestAssist = doRequestAssist
+window.__doAcceptAssist  = doAcceptAssist
+window.__doRejectAssist  = doRejectAssist
