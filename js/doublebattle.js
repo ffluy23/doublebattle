@@ -215,6 +215,14 @@ function triggerBlink(prefix) {
     el.classList.add("blink-damage")
     el.addEventListener("animationend", () => el.classList.remove("blink-damage"), {once:true})
   })
+
+  // 포트레이트 넉백 효과
+  const portrait = area.querySelector(".portrait-wrap")
+  if(portrait) {
+    portrait.classList.remove("defender-hit"); void portrait.offsetWidth
+    portrait.classList.add("defender-hit")
+    portrait.addEventListener("animationend", () => portrait.classList.remove("defender-hit"), {once:true})
+  }
 }
 
 // ── 기술 버튼 ────────────────────────────────────
@@ -446,13 +454,22 @@ async function doSkipTurn() {
 
 // ── ASSIST! 애니메이션 ───────────────────────────
 let lastAssistEventTs = 0
+let assistAnimPlaying = false
 
 function showAssistAnimation() {
-  const el = $("assist-anim")
-  if(!el) return
-  el.classList.remove("assist-show")
-  void el.offsetWidth
-  el.classList.add("assist-show")
+  return new Promise(resolve => {
+    const el = $("assist-anim")
+    if(!el) { resolve(); return }
+    assistAnimPlaying = true
+    el.classList.remove("assist-show")
+    void el.offsetWidth
+    el.classList.add("assist-show")
+    // 1.2s 애니메이션 끝나면 resolve
+    setTimeout(() => {
+      assistAnimPlaying = false
+      resolve()
+    }, 1200)
+  })
 }
 function updateAssistUI(data) {
   const myTeam    = teamOf(mySlot)
@@ -582,7 +599,10 @@ async function leaveGame() {
       assist_request_A: null, assist_request_B: null,
       assist_teamA: null, assist_teamB: null,
       assist_used_A: false, assist_used_B: false,
-      assist_event: null
+      assist_event: null,
+      sync_request_A: null, sync_request_B: null,
+      sync_teamA: null, sync_teamB: null,
+      sync_used_A: false, sync_used_B: false
     })
   } catch(e) {
     console.error("방 초기화 실패:", e)
@@ -623,7 +643,13 @@ function listenRoom() {
     // 각 슬롯 UI 갱신
     ;["p1","p2","p3","p4"].forEach(s => updateSlotUI(s, data))
 
-    // 히트 이벤트
+    // 어시스트 애니메이션 먼저 (supporter 추가타 직전 연출)
+    if(data.assist_event && data.assist_event.ts > lastAssistEventTs) {
+      lastAssistEventTs = data.assist_event.ts
+      await showAssistAnimation()
+    }
+
+    // 히트 이벤트 (어시스트 애니메이션 완료 후 실행)
     if(data.hit_event && data.hit_event.ts > lastHitEventTs) {
       lastHitEventTs = data.hit_event.ts
       const prefix = slotToPrefix(data.hit_event.defender)
@@ -634,12 +660,6 @@ function listenRoom() {
     if(data.dice_event && data.dice_event.ts > lastDiceEventTs) {
       lastDiceEventTs = data.dice_event.ts
       animateDice(data.dice_event.rolls, data.dice_event.slots)
-    }
-
-    // 어시스트 애니메이션 이벤트
-    if(data.assist_event && data.assist_event.ts > lastAssistEventTs) {
-      lastAssistEventTs = data.assist_event.ts
-      showAssistAnimation()
     }
 
     // 게임 종료
@@ -682,6 +702,7 @@ function listenRoom() {
     updateMoveButtons(data)
     updateBenchButtons(data)
     if(!isSpectator) updateAssistUI(data)
+    if(!isSpectator) updateSyncUI(data)
   })
 }
 
@@ -718,3 +739,100 @@ onAuthStateChanged(auth, async user => {
 window.__doRequestAssist = doRequestAssist
 window.__doAcceptAssist  = doAcceptAssist
 window.__doRejectAssist  = doRejectAssist
+
+// ── 싱크로나이즈 UI ──────────────────────────────
+function updateSyncUI(data) {
+  const myTeam  = teamOf(mySlot)
+  const syncKey = `sync_team${myTeam}`
+  const usedKey = `sync_used_${myTeam}`
+  const reqKey  = `sync_request_${myTeam}`
+  const sync    = data[syncKey] ?? null
+  const used    = data[usedKey] ?? false
+  const req     = data[reqKey] ?? null
+
+  const reqBtn = $("sync-request-btn")
+  if(reqBtn) {
+    if(isSpectator || used || sync || req) {
+      reqBtn.disabled = true
+      reqBtn.innerText = sync ? "💠 싱크로나이즈 중" : used ? "동기화 완료" : req ? "요청 중..." : "동기화 요청"
+    } else {
+      reqBtn.disabled = false
+      reqBtn.innerText = "동기화 요청"
+    }
+  }
+
+  const statusEl = $("sync-status")
+  if(statusEl) {
+    if(sync?.requester === mySlot || sync?.supporter === mySlot) {
+      const partner = sync.requester === mySlot ? sync.supporterName : sync.requesterName
+      statusEl.innerText = `💠 싱크로나이즈 (${partner})`
+      statusEl.style.color = "#9b59b6"
+    } else {
+      statusEl.innerText = ""
+    }
+  }
+
+  const popup = $("sync-popup")
+  if(popup) {
+    if(req && req.to === mySlot && !isSpectator) {
+      popup.style.display = "block"
+      const nameEl = $("sync-popup-name")
+      if(nameEl) nameEl.innerText = req.fromName ?? req.from
+    } else {
+      popup.style.display = "none"
+    }
+  }
+}
+
+async function doRequestSync() {
+  if(!myTurn) { alert("자신의 턴에만 동기화 요청할 수 있어!"); return }
+  try {
+    const { updateDoc } = await import("https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js")
+    const snap   = await getDoc(roomRef)
+    const data   = snap.data()
+    const myTeam = teamOf(mySlot)
+    const reqKey = `sync_request_${myTeam}`
+    if(data[`sync_used_${myTeam}`])  { alert("이미 동기화를 사용했어!"); return }
+    if(data[`sync_team${myTeam}`])   { alert("이미 동기화가 활성화됨"); return }
+    if(data[reqKey])                  { alert("이미 요청 중"); return }
+    const myName = data[`${mySlot.replace("p","player")}_name`] ?? mySlot
+    const ally   = allyOf(mySlot)
+    await updateDoc(roomRef, {
+      [reqKey]: { from: mySlot, fromName: myName, to: ally, ts: Date.now() }
+    })
+  } catch(e) { alert(`동기화 요청 실패: ${e.message}`) }
+}
+
+async function doAcceptSync() {
+  try {
+    const { updateDoc, addDoc } = await import("https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js")
+    const snap   = await getDoc(roomRef)
+    const data   = snap.data()
+    const myTeam = teamOf(mySlot)
+    const reqKey = `sync_request_${myTeam}`
+    const req    = data[reqKey]
+    if(!req || req.to !== mySlot) return
+    const myName = data[`${mySlot.replace("p","player")}_name`] ?? mySlot
+    await updateDoc(roomRef, {
+      [`sync_team${myTeam}`]:  { requester: req.from, requesterName: req.fromName, supporter: mySlot, supporterName: myName },
+      [`sync_used_${myTeam}`]: true,
+      [reqKey]:                null
+    })
+    await addDoc(logsRef, {
+      text: `💠 ${req.fromName}${josa(req.fromName,"과와")} ${myName}${josa(myName,"이가")} 싱크로나이즈를 맺었다!`,
+      ts: Date.now()
+    })
+  } catch(e) { alert(`수락 실패: ${e.message}`) }
+}
+
+async function doRejectSync() {
+  try {
+    const { updateDoc } = await import("https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js")
+    const myTeam = teamOf(mySlot)
+    await updateDoc(roomRef, { [`sync_request_${myTeam}`]: null })
+  } catch(e) { console.warn("거절 실패:", e.message) }
+}
+
+window.__doRequestSync = doRequestSync
+window.__doAcceptSync  = doAcceptSync
+window.__doRejectSync  = doRejectSync
