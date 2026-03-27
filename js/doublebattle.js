@@ -260,10 +260,9 @@ function enterTargetMode(idx, data) {
     if(!area) return
     area.classList.add("target-selectable")
     area.onclick = () => {
-  const idx = pendingMoveIdx  // 먼저 저장
-  exitTargetMode()             // 그 다음 리셋
-  doUseMove(idx, [eSlot], data)
-}
+      exitTargetMode()
+      doUseMove(pendingMoveIdx, [eSlot], data)
+    }
   })
 }
 
@@ -282,7 +281,6 @@ function exitTargetMode() {
 async function doUseMove(moveIdx, targetSlots, data) {
   if(actionDone) return
   actionDone = true
-  console.log("doUseMove 호출:", { moveIdx, targetSlots, mySlot, ROOM_ID })
   updateMoveButtons(data)
   try {
     await _useMove({ roomId: ROOM_ID, mySlot, moveIdx, targetSlots })
@@ -412,7 +410,51 @@ function showGameOver(data) {
   const bench=$("bench-container"); if(bench) bench.innerHTML=""
 
   const lb = $("leaveBtn")
-  if(lb) { lb.style.display="inline-block"; lb.disabled=false; lb.onclick=()=>location.href="../main.html" }
+  if(lb) { lb.style.display="inline-block"; lb.disabled=false; lb.onclick=leaveGame }
+}
+
+// ── 턴 스킵 (엔트리 전멸 시) ────────────────────
+const _skipTurn = httpsCallable(functions, "skipTurn")
+
+async function doSkipTurn() {
+  try {
+    await _skipTurn({ roomId: ROOM_ID, mySlot })
+  } catch(e) {
+    console.warn("skipTurn 오류:", e.message)
+    actionDone = false
+  }
+}
+
+// ── 방 나가기 + Firestore 초기화 ─────────────────
+async function leaveGame() {
+  try {
+    // 로그 컬렉션 전체 삭제
+    const { getDocs, deleteDoc, collection: col, updateDoc: upd } =
+      await import("https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js")
+    const logSnap = await getDocs(col(db, "double", ROOM_ID, "logs"))
+    await Promise.all(logSnap.docs.map(d => deleteDoc(d.ref)))
+
+    // 방 문서 초기화
+    await upd(roomRef, {
+      player1_uid: null, player1_name: null, player1_ready: false,
+      player2_uid: null, player2_name: null, player2_ready: false,
+      player3_uid: null, player3_name: null, player3_ready: false,
+      player4_uid: null, player4_name: null, player4_ready: false,
+      spectators: [], spectator_names: [],
+      game_started: false, game_over: false,
+      winner_team: null,
+      round_count: 0, turn_count: 0,
+      current_order: [], pending_switches: [],
+      p1_entry: null, p1_active_idx: 0,
+      p2_entry: null, p2_active_idx: 0,
+      p3_entry: null, p3_active_idx: 0,
+      p4_entry: null, p4_active_idx: 0,
+      hit_event: null, dice_event: null
+    })
+  } catch(e) {
+    console.error("방 초기화 실패:", e)
+  }
+  location.href = "../main.html"
 }
 
 // ── startRound (중복 방지) ───────────────────────
@@ -477,6 +519,19 @@ function listenRoom() {
 
       if(!wasMyTurn && myTurn) actionDone = false
       if(pending.includes(mySlot)) actionDone = false
+
+      // 내 턴인데 엔트리가 전멸한 경우 → 자동 턴 스킵
+      // (서버 startRound에서 살아있는 슬롯만 order에 넣지만,
+      //  라운드 도중 전멸하면 order에 남아있을 수 있음)
+      if(myTurn && !actionDone) {
+        const myEntry = data[`${mySlot}_entry`] ?? []
+        const allDead = myEntry.every(p => p.hp <= 0)
+        if(allDead) {
+          actionDone = true
+          await doSkipTurn()
+          return
+        }
+      }
 
       // 라운드 시작 조건: order 비었고, pending 없고, 게임 진행중
       if(order.length === 0 && pending.length === 0 && data.game_started && !data.game_over) {
