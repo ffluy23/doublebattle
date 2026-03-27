@@ -197,7 +197,7 @@ function triggerBlink(prefix) {
   if(!area) return
 
   // 화면 흔들림 (battle-wrapper 전체)
-  const wrapper = $("battle-screen")
+  const wrapper = $("battle-wrapper")
   if(wrapper) {
     wrapper.classList.remove("screen-shake"); void wrapper.offsetWidth
     wrapper.classList.add("screen-shake")
@@ -464,11 +464,21 @@ function showAssistAnimation() {
     el.classList.remove("assist-show")
     void el.offsetWidth
     el.classList.add("assist-show")
-    // 1.2s 애니메이션 끝나면 resolve
-    setTimeout(() => {
-      assistAnimPlaying = false
-      resolve()
-    }, 1200)
+    setTimeout(() => { assistAnimPlaying = false; resolve() }, 800)
+  })
+}
+
+// ── SYNCHRONIZE! 애니메이션 ──────────────────────
+let lastSyncEventTs = 0
+
+function showSyncAnimation() {
+  return new Promise(resolve => {
+    const el = $("sync-anim")
+    if(!el) { resolve(); return }
+    el.classList.remove("sync-show")
+    void el.offsetWidth
+    el.classList.add("sync-show")
+    setTimeout(resolve, 800)
   })
 }
 function updateAssistUI(data) {
@@ -602,7 +612,8 @@ async function leaveGame() {
       assist_event: null,
       sync_request_A: null, sync_request_B: null,
       sync_teamA: null, sync_teamB: null,
-      sync_used_A: false, sync_used_B: false
+      sync_used_A: false, sync_used_B: false,
+      sync_event: null
     })
   } catch(e) {
     console.error("방 초기화 실패:", e)
@@ -649,7 +660,13 @@ function listenRoom() {
       await showAssistAnimation()
     }
 
-    // 히트 이벤트 (어시스트 애니메이션 완료 후 실행)
+    // 싱크로나이즈 애니메이션 (피해 분산 직전)
+    if(data.sync_event && data.sync_event.ts > lastSyncEventTs) {
+      lastSyncEventTs = data.sync_event.ts
+      await showSyncAnimation()
+    }
+
+    // 히트 이벤트 (애니메이션 완료 후 실행)
     if(data.hit_event && data.hit_event.ts > lastHitEventTs) {
       lastHitEventTs = data.hit_event.ts
       const prefix = slotToPrefix(data.hit_event.defender)
