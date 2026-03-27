@@ -6,7 +6,6 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js"
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-functions.js"
 import { moves } from "./moves.js"
-import { josa } from "./effecthandler.js"
 
 // ── Firebase Functions 연결 ──────────────────────
 const functions    = getFunctions()
@@ -190,30 +189,12 @@ function animateDice(rolls, slots, onDone) {
 }
 
 // ── 히트 이펙트 ─────────────────────────────────
-// portrait-wrap + hp-card 만 깜빡임 (기술버튼/채팅창 제외)
 function triggerBlink(prefix) {
   const area = $(`${prefix}-pokemon-area`)
   if(!area) return
-
-  // 화면 흔들림 (battle-wrapper 전체)
-  const wrapper = $("battle-wrapper")
-  if(wrapper) {
-    wrapper.classList.remove("screen-shake"); void wrapper.offsetWidth
-    wrapper.classList.add("screen-shake")
-    wrapper.addEventListener("animationend", () => wrapper.classList.remove("screen-shake"), {once:true})
-  }
-
-  // portrait-wrap, hp-card 만 깜빡임
-  const targets = [
-    area.querySelector(".portrait-wrap"),
-    area.querySelector(".hp-card")
-  ].filter(Boolean)
-
-  targets.forEach(el => {
-    el.classList.remove("blink-damage"); void el.offsetWidth
-    el.classList.add("blink-damage")
-    el.addEventListener("animationend", () => el.classList.remove("blink-damage"), {once:true})
-  })
+  area.classList.remove("blink-damage"); void area.offsetWidth
+  area.classList.add("blink-damage")
+  area.addEventListener("animationend", () => area.classList.remove("blink-damage"), {once:true})
 }
 
 // ── 기술 버튼 ────────────────────────────────────
@@ -255,6 +236,7 @@ function onMoveClick(idx, moveInfo, data) {
   const r = moveInfo?.rank
   const targetsEnemy = moveInfo?.power
     || (r && (r.targetAtk!==undefined || r.targetDef!==undefined || r.targetSpd!==undefined))
+      || moveInfo?.targetSelf === false
 
   if(targetsEnemy) {
     enterTargetMode(idx, data)
@@ -278,11 +260,10 @@ function enterTargetMode(idx, data) {
     const area   = $(`${prefix}-pokemon-area`)
     if(!area) return
     area.classList.add("target-selectable")
-   area.onclick = () => {
-  const idx = pendingMoveIdx
-  exitTargetMode()
-  doUseMove(idx, [eSlot], data)
-}
+    area.onclick = () => {
+      exitTargetMode()
+      doUseMove(pendingMoveIdx, [eSlot], data)
+    }
   })
 }
 
