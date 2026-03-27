@@ -262,6 +262,7 @@ function enterTargetMode(idx, data) {
     area.classList.add("target-selectable")
     area.onclick = () => {
       exitTargetMode()
+      const idx = pendingMoveIdx
       doUseMove(pendingMoveIdx, [eSlot], data)
     }
   })
