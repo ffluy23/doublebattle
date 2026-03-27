@@ -278,10 +278,11 @@ function enterTargetMode(idx, data) {
     const area   = $(`${prefix}-pokemon-area`)
     if(!area) return
     area.classList.add("target-selectable")
-    area.onclick = () => {
-      exitTargetMode()
-      doUseMove(pendingMoveIdx, [eSlot], data)
-    }
+   area.onclick = () => {
+  const idx = pendingMoveIdx
+  exitTargetMode()
+  doUseMove(idx, [eSlot], data)
+}
   })
 }
 
