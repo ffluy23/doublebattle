@@ -444,7 +444,16 @@ async function doSkipTurn() {
   }
 }
 
-// ── 어시스트 UI ──────────────────────────────────
+// ── ASSIST! 애니메이션 ───────────────────────────
+let lastAssistEventTs = 0
+
+function showAssistAnimation() {
+  const el = $("assist-anim")
+  if(!el) return
+  el.classList.remove("assist-show")
+  void el.offsetWidth
+  el.classList.add("assist-show")
+}
 function updateAssistUI(data) {
   const myTeam    = teamOf(mySlot)
   const assistKey = `assist_team${myTeam}`
@@ -496,6 +505,8 @@ function updateAssistUI(data) {
 }
 
 async function doRequestAssist() {
+  // 자기 턴에만 요청 가능
+  if(!myTurn) { alert("자신의 턴에만 지원 요청할 수 있어!"); return }
   try {
     const { updateDoc } = await import("https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js")
     const snap   = await getDoc(roomRef)
@@ -570,7 +581,8 @@ async function leaveGame() {
       hit_event: null, dice_event: null,
       assist_request_A: null, assist_request_B: null,
       assist_teamA: null, assist_teamB: null,
-      assist_used_A: false, assist_used_B: false
+      assist_used_A: false, assist_used_B: false,
+      assist_event: null
     })
   } catch(e) {
     console.error("방 초기화 실패:", e)
@@ -622,6 +634,12 @@ function listenRoom() {
     if(data.dice_event && data.dice_event.ts > lastDiceEventTs) {
       lastDiceEventTs = data.dice_event.ts
       animateDice(data.dice_event.rolls, data.dice_event.slots)
+    }
+
+    // 어시스트 애니메이션 이벤트
+    if(data.assist_event && data.assist_event.ts > lastAssistEventTs) {
+      lastAssistEventTs = data.assist_event.ts
+      showAssistAnimation()
     }
 
     // 게임 종료
