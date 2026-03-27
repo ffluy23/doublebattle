@@ -499,26 +499,44 @@ function updateAssistUI(data) {
 
 async function doRequestAssist() {
   try {
-    await _requestAssist({ roomId: ROOM_ID, mySlot })
-  } catch(e) {
-    alert(`어시스트 요청 실패: ${e.message}`)
-  }
+    const { updateDoc } = await import("https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js")
+    const snap = await getDoc(roomRef)
+    const data = snap.data()
+    const myTeam = teamOf(mySlot)
+    if(data[`assist_used_${myTeam}`]) { alert("이미 어시스트를 사용했어!"); return }
+    if(data[`assist_team${myTeam}`])  { alert("이미 어시스트가 활성화됨"); return }
+    if(data.assist_request)           { alert("이미 요청 중"); return }
+    const myName = data[`${mySlot.replace("p","player")}_name`] ?? mySlot
+    const ally   = allyOf(mySlot)
+    await updateDoc(roomRef, {
+      assist_request: { from: mySlot, fromName: myName, to: ally, ts: Date.now() }
+    })
+  } catch(e) { alert(`어시스트 요청 실패: ${e.message}`) }
 }
 
 async function doAcceptAssist() {
   try {
-    await _acceptAssist({ roomId: ROOM_ID, mySlot })
-  } catch(e) {
-    alert(`수락 실패: ${e.message}`)
-  }
+    const { updateDoc, addDoc } = await import("https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js")
+    const snap = await getDoc(roomRef)
+    const data = snap.data()
+    const req  = data.assist_request
+    if(!req || req.to !== mySlot) return
+    const myTeam  = teamOf(mySlot)
+    const myName  = data[`${mySlot.replace("p","player")}_name`] ?? mySlot
+    await updateDoc(roomRef, {
+      [`assist_team${myTeam}`]: { requester: req.from, requesterName: req.fromName, supporter: mySlot, supporterName: myName },
+      [`assist_used_${myTeam}`]: true,
+      assist_request: null
+    })
+    await addDoc(logsRef, { text: `🤝 ${req.fromName}${josa(req.fromName,"과와")} ${myName}${josa(myName,"이가")} 어시스트를 맺었다!`, ts: Date.now() })
+  } catch(e) { alert(`수락 실패: ${e.message}`) }
 }
 
 async function doRejectAssist() {
   try {
-    await _rejectAssist({ roomId: ROOM_ID })
-  } catch(e) {
-    console.warn("거절 실패:", e.message)
-  }
+    const { updateDoc } = await import("https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js")
+    await updateDoc(roomRef, { assist_request: null })
+  } catch(e) { console.warn("거절 실패:", e.message) }
 }
 
 // ── 방 나가기 + Firestore 초기화 ─────────────────
