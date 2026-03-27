@@ -197,7 +197,7 @@ function triggerBlink(prefix) {
   if(!area) return
 
   // 화면 흔들림 (battle-wrapper 전체)
-  const wrapper = $("battle-wrapper")
+  const wrapper = $("battle-screen")
   if(wrapper) {
     wrapper.classList.remove("screen-shake"); void wrapper.offsetWidth
     wrapper.classList.add("screen-shake")
