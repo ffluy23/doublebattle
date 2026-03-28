@@ -97,6 +97,7 @@ function listenRoom() {
       if(mySlot === "player1") {
         await updateDoc(roomRef, {
           game_started:    true,
+          game_started_at: Date.now(),
           round_count:     0,
           turn_count:      0,
           current_order:   [],
