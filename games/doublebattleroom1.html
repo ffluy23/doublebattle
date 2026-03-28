@@ -6,6 +6,9 @@
   <title>Double Battle Room 1</title>
   <link rel="stylesheet" href="../css/style.css">
   <style>
+
+@import url('https://cdn.jsdelivr.net/gh/MonadABXY/mona-font/web/mona.css');
+
     body {
       background-color: #1a1a2e;
       padding: 0; min-height: 100vh;
@@ -31,17 +34,33 @@
       font-size: 12px; color: #888; padding: 0 4px;
     }
 
-    /* ── 메인 5칼럼 ── */
+    /* ── 메인 4칼럼 ── */
     #battle-top {
       display: grid;
-      grid-template-columns: 1fr 1fr 160px 1fr 1fr;
+      grid-template-columns: 1fr 1fr 160px 2fr;
       gap: 10px;
       align-items: start;
     }
 
+    .enemy-box {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      align-items: start;
+    }
+
+ 
+
     /* ── 포켓몬 칼럼 ── */
     .pkmn-col {
       display: flex; flex-direction: column; gap: 6px;
+    }
+
+    .help-btn {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
     }
 
     /* ── 가운데 ── */
@@ -105,6 +124,7 @@
 
     /* ── 포트레이트 ── */
     .portrait-wrap { position: relative; width: 90px; height: 90px; flex-shrink: 0; }
+    .portrait-wrap.enemy{margin-left: auto;}
     .portrait-placeholder { position: absolute; inset: 0; background: #282B42; border-radius: 5px; }
     .portrait-img {
       position: absolute; inset: 0; width: 100%; height: 100%;
@@ -199,7 +219,7 @@
     #chat-send-btn:hover { background: #45a049; }
 
     /* ── ASSIST! 애니메이션 ── */
-     /* ── ASSIST! 애니메이션 ── */
+
     #assist-anim {
       position: fixed;
       top: 40%;
@@ -332,7 +352,7 @@
 
     /* ── 어시스트 ── */
     #assist-section {
-      display: flex; flex-direction: column; gap: 4px; margin-top: 4px;
+      display: flex; flex-direction: column;
     }
     #assist-request-btn {
       padding: 5px 10px; font-size: 11px; border-radius: 6px;
@@ -344,6 +364,9 @@
     #assist-request-btn:disabled { opacity: .5; cursor: not-allowed; }
     #assist-status { font-size: 10px; min-height: 14px; }
     #assist-popup {
+      
+      z-index: 100; 
+      top: 100%;
       font-size: 11px; padding: 6px 8px;
       border: 1px solid #e67e22; border-radius: 6px;
       background: #fff8f0; display: flex; flex-direction: column; gap: 4px;
@@ -357,7 +380,7 @@
 
     /* ── 싱크로나이즈 ── */
     #sync-section {
-      display: flex; flex-direction: column; gap: 4px; margin-top: 4px;
+      display: flex; flex-direction: column; 
     }
     #sync-request-btn {
       padding: 5px 10px; font-size: 11px; border-radius: 6px;
@@ -369,6 +392,9 @@
     #sync-request-btn:disabled { opacity: .5; cursor: not-allowed; }
     #sync-status { font-size: 10px; min-height: 14px; }
     #sync-popup {
+      
+      z-index: 100;
+      top: 100%;
       font-size: 11px; padding: 6px 8px;
       border: 1px solid #9b59b6; border-radius: 6px;
       background: #f9f0ff; display: flex; flex-direction: column; gap: 4px;
@@ -390,7 +416,7 @@
       85% { transform: translateX(5px); }
       100%{ transform: translateX(0); }
     }
-    #battle-bottom { display: flex; flex-direction: column; gap: 6px; }
+    #battle-bottom { display: flex; flex-direction: column; gap: 6px; margin-top: 10px;}
     #battle-log {
       width: 100%; height: 140px; overflow-y: auto;
       border: 1px solid #444; border-radius: 6px;
@@ -517,7 +543,7 @@
           <button id="move-btn-2" disabled>-</button>
           <button id="move-btn-3" disabled>-</button>
         </div>
-        <div id="target-hint">⚔ 공격할 상대를 클릭하세요</div>
+        <div id="target-hint">⚔ 공격할 상대를 클릭!</div>
       </div>
       <div>
         <p class="section-label">교체</p>
@@ -541,16 +567,8 @@
         </div>
         <div class="hp-bar-wrap"><div class="hp-bar" id="ally-hp-bar"></div></div>
       </div>
-      <!-- 팀 채팅 -->
-      <div id="chat-section">
-        <div id="chat-channel-label">채팅</div>
-        <div id="chat-messages"></div>
-        <div id="chat-input-row">
-          <input id="chat-input" type="text" placeholder="팀원에게..." maxlength="200">
-          <button id="chat-send-btn">전송</button>
-        </div>
-      </div>
       <!-- 어시스트 -->
+    <div class="help-btn">
       <div id="assist-section">
         <button id="assist-request-btn" onclick="window.__doRequestAssist()">지원 요청</button>
         <div id="assist-status"></div>
@@ -570,6 +588,8 @@
           <button onclick="window.__doRejectSync()">거절</button>
         </div>
       </div>
+      </div>
+
     </div>
 
     <!-- 가운데: 턴 + 순서 + 주사위 -->
@@ -604,9 +624,11 @@
     </div>
 
     <!-- 적 1 -->
+  <div class="enemy-section">
+    <div class="enemy-box">
     <div class="pkmn-col enemy1" id="enemy1-pokemon-area">
       <p class="section-label" id="enemy1-name-label">-</p>
-      <div class="portrait-wrap">
+      <div class="portrait-wrap enemy">
         <div class="portrait-placeholder" id="enemy1-portrait-placeholder"></div>
         <img id="enemy1-portrait" class="portrait-img" alt="">
       </div>
@@ -622,7 +644,7 @@
     <!-- 적 2 -->
     <div class="pkmn-col enemy2" id="enemy2-pokemon-area">
       <p class="section-label" id="enemy2-name-label">-</p>
-      <div class="portrait-wrap">
+      <div class="portrait-wrap enemy">
         <div class="portrait-placeholder" id="enemy2-portrait-placeholder"></div>
         <img id="enemy2-portrait" class="portrait-img" alt="">
       </div>
@@ -634,15 +656,27 @@
         <div class="hp-bar-wrap"><div class="hp-bar" id="enemy2-hp-bar"></div></div>
       </div>
     </div>
-
-  </div><!-- /battle-top -->
-
-  <!-- 배틀 로그 -->
+    </div>
+     <!-- 배틀 로그 -->
   <div id="battle-bottom">
     <p class="section-label">배틀 로그</p>
     <div id="battle-log"></div>
     <div id="spectator-list"></div>
   </div>
+  </div>
+
+  </div><!-- /battle-top -->
+
+ 
+     <!-- 팀 채팅 -->
+      <div id="chat-section">
+        <div id="chat-channel-label">채팅</div>
+        <div id="chat-messages"></div>
+        <div id="chat-input-row">
+          <input id="chat-input" type="text" placeholder="아군에게..." maxlength="200">
+          <button id="chat-send-btn">전송</button>
+        </div>
+      </div>
 
 </div><!-- /battle-screen -->
 </div><!-- /battle-wrapper -->
@@ -651,4 +685,4 @@
 <script type="module" src="../js/chat.js"></script>
 <script type="module" src="../js/doublebattle.js"></script>
 </body>
-</html>
+</html> 
