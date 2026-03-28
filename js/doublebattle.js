@@ -24,6 +24,7 @@ let mySlot = null, myUid = null
 let myTurn = false, actionDone = false, gameOver = false
 let lastDiceEventTs = 0, lastHitEventTs = 0
 let renderedLogIds  = new Set()
+let renderedSyncLogs = new Set()
 let typingQueue = [], isTyping = false
 let pendingMoveIdx  = -1
 
@@ -197,7 +198,7 @@ function triggerBlink(prefix) {
   if(!area) return
 
   // 화면 흔들림 (battle-wrapper 전체)
-  const wrapper = $("battle-screen")
+  const wrapper = $("battle-wrapper")
   if(wrapper) {
     wrapper.classList.remove("screen-shake"); void wrapper.offsetWidth
     wrapper.classList.add("screen-shake")
@@ -637,6 +638,8 @@ async function tryStartRound() {
 }
 
 // ── 메인 리스너 ─────────────────────────────────
+let isHandlingSnapshot = false  // 애니메이션 중 snapshot 중복 처리 방지
+
 function listenRoom() {
   onSnapshot(roomRef, async snap => {
     const data = snap.data()
@@ -651,22 +654,45 @@ function listenRoom() {
 
     if(!data.p1_entry) return  // 엔트리 아직 없음
 
+    // 싱크로나이즈 맺음 로그 (내 팀에게만 표시)
+    if(!isSpectator && mySlot) {
+      const myTeam   = teamOf(mySlot)
+      const syncLog  = data[`sync_log_${myTeam}`]
+      const syncLogKey = `sync_log_${myTeam}`
+      if(syncLog && !renderedSyncLogs.has(syncLog)) {
+        renderedSyncLogs.add(syncLog)
+        typingQueue.push({ text: syncLog })
+        processQueue()
+        // 읽은 후 필드 지우기 (한 번만 표시)
+        const { updateDoc: upd } = await import("https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js")
+        upd(roomRef, { [syncLogKey]: null }).catch(() => {})
+      }
+    }
+
     // 각 슬롯 UI 갱신
     ;["p1","p2","p3","p4"].forEach(s => updateSlotUI(s, data))
 
-    // 어시스트 애니메이션 먼저 (supporter 추가타 직전 연출)
+    // 어시스트 애니메이션 (await 중 중복 snapshot 무시)
     if(data.assist_event && data.assist_event.ts > lastAssistEventTs) {
       lastAssistEventTs = data.assist_event.ts
-      await showAssistAnimation()
+      if(!isHandlingSnapshot) {
+        isHandlingSnapshot = true
+        await showAssistAnimation()
+        isHandlingSnapshot = false
+      }
     }
 
-    // 싱크로나이즈 애니메이션 (피해 분산 직전)
+    // 싱크로나이즈 애니메이션
     if(data.sync_event && data.sync_event.ts > lastSyncEventTs) {
       lastSyncEventTs = data.sync_event.ts
-      await showSyncAnimation()
+      if(!isHandlingSnapshot) {
+        isHandlingSnapshot = true
+        await showSyncAnimation()
+        isHandlingSnapshot = false
+      }
     }
 
-    // 히트 이벤트 (애니메이션 완료 후 실행)
+    // 히트 이벤트
     if(data.hit_event && data.hit_event.ts > lastHitEventTs) {
       lastHitEventTs = data.hit_event.ts
       const prefix = slotToPrefix(data.hit_event.defender)
@@ -822,7 +848,7 @@ async function doRequestSync() {
 
 async function doAcceptSync() {
   try {
-    const { updateDoc, addDoc } = await import("https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js")
+    const { updateDoc } = await import("https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js")
     const snap   = await getDoc(roomRef)
     const data   = snap.data()
     const myTeam = teamOf(mySlot)
@@ -830,14 +856,12 @@ async function doAcceptSync() {
     const req    = data[reqKey]
     if(!req || req.to !== mySlot) return
     const myName = data[`${mySlot.replace("p","player")}_name`] ?? mySlot
+    // 전체 로그(logsRef)가 아닌 팀별 비공개 필드에 저장 → 상대팀에게 안 보임
     await updateDoc(roomRef, {
       [`sync_team${myTeam}`]:  { requester: req.from, requesterName: req.fromName, supporter: mySlot, supporterName: myName },
       [`sync_used_${myTeam}`]: true,
-      [reqKey]:                null
-    })
-    await addDoc(logsRef, {
-      text: `💠 ${req.fromName}${josa(req.fromName,"과와")} ${myName}${josa(myName,"이가")} 싱크로나이즈를 맺었다!`,
-      ts: Date.now()
+      [reqKey]:                null,
+      [`sync_log_${myTeam}`]:  `💠 ${req.fromName}${josa(req.fromName,"과와")} ${myName}${josa(myName,"이가")} 싱크로나이즈를 맺었다!`
     })
   } catch(e) { alert(`수락 실패: ${e.message}`) }
 }
