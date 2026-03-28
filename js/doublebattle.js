@@ -22,7 +22,7 @@ const logsRef = collection(db, "double", ROOM_ID, "logs")
 // ── 상태 변수 ────────────────────────────────────
 let mySlot = null, myUid = null
 let myTurn = false, actionDone = false, gameOver = false
-let lastDiceEventTs = 0, lastHitEventTs = 0
+let lastDiceEventTs = 0, lastHitEventTs = 0, lastAttackDiceTs = 0
 let renderedLogIds  = new Set()
 let renderedSyncLogs = new Set()
 let typingQueue = [], isTyping = false
@@ -137,13 +137,16 @@ function processQueue() {
   typeNext()
 }
 
-function listenLogs() {
+function listenLogs(gameStartedAt) {
   const q = query(logsRef, orderBy("ts"))
   onSnapshot(q, snap => {
     snap.docs.forEach(d => {
       if(renderedLogIds.has(d.id)) return
+      const logData = d.data()
+      // 이번 게임 시작 이전 로그는 무시
+      if(gameStartedAt && logData.ts < gameStartedAt) return
       renderedLogIds.add(d.id)
-      typingQueue.push({ text: d.data().text })
+      typingQueue.push({ text: logData.text })
     })
     processQueue()
   })
@@ -362,6 +365,9 @@ function updateBenchButtons(data) {
 async function doSwitchPokemon(newIdx, data) {
   if(actionDone) return
   actionDone = true
+  // 즉시 교체 버튼 비활성화 (서버 응답 기다리지 않고 바로)
+  const bench = $("bench-container")
+  if(bench) bench.querySelectorAll("button").forEach(b => { b.disabled = true; b.onclick = null })
   try {
     await _switchPkmn({ roomId: ROOM_ID, mySlot, newIdx })
   } catch(e) {
@@ -482,21 +488,34 @@ function showSyncAnimation() {
     setTimeout(resolve, 800)
   })
 }
+
+// ── 공격 다이스 표시 ─────────────────────────────
+function showAttackDice(value) {
+  const el = $("attack-dice-display")
+  if(!el) return
+  el.innerText = value
+  el.classList.remove("attack-dice-pop")
+  void el.offsetWidth
+  el.classList.add("attack-dice-pop")
+  el.addEventListener("animationend", () => el.classList.remove("attack-dice-pop"), {once:true})
+}
+
+// ── 어시스트 UI ──────────────────────────────────
 function updateAssistUI(data) {
   const myTeam    = teamOf(mySlot)
   const assistKey = `assist_team${myTeam}`
   const usedKey   = `assist_used_${myTeam}`
-  const reqKey    = `assist_request_${myTeam}`  // 팀별 분리
+  const reqKey    = `assist_request_${myTeam}`
   const assist    = data[assistKey] ?? null
   const used      = data[usedKey] ?? false
   const req       = data[reqKey] ?? null
+  const teamDead  = isTeamAllDead(data)
 
-  // 요청 버튼
   const reqBtn = $("assist-request-btn")
   if(reqBtn) {
-    if(isSpectator || used || assist || req) {
+    if(isSpectator || used || assist || req || teamDead) {
       reqBtn.disabled = true
-      reqBtn.innerText = assist
+      reqBtn.innerText = teamDead ? "사용 불가" : assist
         ? `🤝 어시스트 중`
         : used ? "지원 완료" : req ? "요청 중..." : "지원 요청"
     } else {
@@ -699,10 +718,16 @@ function listenRoom() {
       if(prefix) triggerBlink(prefix)
     }
 
-    // 주사위 이벤트
+    // 주사위 이벤트 (라운드 시작 주사위)
     if(data.dice_event && data.dice_event.ts > lastDiceEventTs) {
       lastDiceEventTs = data.dice_event.ts
       animateDice(data.dice_event.rolls, data.dice_event.slots)
+    }
+
+    // 공격 다이스 이벤트 (공격 전 다이스 값 표시)
+    if(data.attack_dice && data.attack_dice.ts > lastAttackDiceTs) {
+      lastAttackDiceTs = data.attack_dice.ts
+      showAttackDice(data.attack_dice.value)
     }
 
     // 게임 종료
@@ -774,7 +799,7 @@ onAuthStateChanged(auth, async user => {
     window.initDoubleChat({ db, ROOM_ID, myUid, mySlot, isSpectator })
   }
 
-  listenLogs()
+  listenLogs(data?.game_started_at ?? 0)
   listenRoom()
 })
 
@@ -792,12 +817,13 @@ function updateSyncUI(data) {
   const sync    = data[syncKey] ?? null
   const used    = data[usedKey] ?? false
   const req     = data[reqKey] ?? null
+  const teamDead = isTeamAllDead(data)
 
   const reqBtn = $("sync-request-btn")
   if(reqBtn) {
-    if(isSpectator || used || sync || req) {
+    if(isSpectator || used || sync || req || teamDead) {
       reqBtn.disabled = true
-      reqBtn.innerText = sync ? "💠 싱크로나이즈 중" : used ? "동기화 완료" : req ? "요청 중..." : "동기화 요청"
+      reqBtn.innerText = teamDead ? "사용 불가" : sync ? "💠 싱크로나이즈 중" : used ? "동기화 완료" : req ? "요청 중..." : "동기화 요청"
     } else {
       reqBtn.disabled = false
       reqBtn.innerText = "동기화 요청"
