@@ -802,9 +802,12 @@ function listenRoom() {
       const pending = data.pending_switches ?? []
 
       const wasMyTurn = myTurn
-      myTurn = order[0] === mySlot
+      const isMyTurnNow = order[0] === mySlot
+      myTurn = isMyTurnNow
 
-      if(!wasMyTurn && myTurn) actionDone = false
+      // actionDone은 내 턴이 아니었다가 내 턴이 됐을 때만 리셋
+      // (어시스트 소멸 등 중간 snapshot에서 리셋되지 않도록)
+      if(!wasMyTurn && isMyTurnNow) actionDone = false
       if(pending.includes(mySlot)) actionDone = false
 
       // 내 턴인데 엔트리가 전멸한 경우 → 자동 턴 스킵
