@@ -134,7 +134,8 @@
     .portrait-img.visible { display: block; opacity: 1; }
 
     /* ── 플레이어 라벨 ── */
-    .section-label { font-size: 10px; color: #999; margin: 0 0 2px 1px; margin-left: auto;}
+    .section-label { font-size: 10px; color: #999; margin: 0 0 2px 1px;}
+    .section-label.enemy {margin-left: auto;}
 
     /* ── 기술 버튼 ── */
     #move-buttons {
@@ -627,7 +628,7 @@
   <div class="enemy-section">
     <div class="enemy-box">
     <div class="pkmn-col enemy1" id="enemy1-pokemon-area">
-      <p class="section-label" id="enemy1-name-label">-</p>
+      <p class="section-label enemy" id="enemy1-name-label">-</p>
       <div class="portrait-wrap enemy">
         <div class="portrait-placeholder" id="enemy1-portrait-placeholder"></div>
         <img id="enemy1-portrait" class="portrait-img" alt="">
@@ -643,7 +644,7 @@
 
     <!-- 적 2 -->
     <div class="pkmn-col enemy2" id="enemy2-pokemon-area">
-      <p class="section-label" id="enemy2-name-label">-</p>
+      <p class="section-label enemy" id="enemy2-name-label">-</p>
       <div class="portrait-wrap enemy">
         <div class="portrait-placeholder" id="enemy2-portrait-placeholder"></div>
         <img id="enemy2-portrait" class="portrait-img" alt="">
