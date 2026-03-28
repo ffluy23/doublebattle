@@ -49,6 +49,14 @@ function teamOf(s)       { return ["p1","p2"].includes(s) ? "A" : "B" }
 function allyOf(s)       { return s==="p1"?"p2":s==="p2"?"p1":s==="p3"?"p4":"p3" }
 function enemySlotsOf(s) { return teamOf(s)==="A" ? ["p3","p4"] : ["p1","p2"] }
 
+function isTeamAllDead(data) {
+  if(!mySlot) return false
+  const ally      = allyOf(mySlot)
+  const myEntry   = data[`${mySlot}_entry`] ?? []
+  const allyEntry = data[`${ally}_entry`] ?? []
+  return myEntry.every(p => p.hp <= 0) && allyEntry.every(p => p.hp <= 0)
+}
+
 // slotToPrefix: 내 시점 기준 prefix 반환
 // my / ally / enemy1 / enemy2
 function slotToPrefix(slot) {
