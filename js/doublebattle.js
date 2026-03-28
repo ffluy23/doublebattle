@@ -8,6 +8,9 @@ import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/
 import { moves } from "./moves.js"
 import { josa } from "./effecthandler.js"
 
+// moves를 window에도 등록 (doUseMove에서 공격 판별용)
+window.__moves = moves
+
 // ── Firebase Functions 연결 ──────────────────────
 const functions      = getFunctions()
 const _startRound    = httpsCallable(functions, "startRound")
@@ -153,6 +156,7 @@ function listenLogs(gameStartedAt) {
 }
 
 // ── 주사위 애니메이션 ────────────────────────────
+// 라운드 시작 주사위 (여러 슬롯)
 function animateDice(rolls, slots, onDone) {
   const wrap = $("dice-wrap")
   if(!wrap) { onDone?.(); return }
@@ -160,17 +164,6 @@ function animateDice(rolls, slots, onDone) {
   ;["p1","p2","p3","p4"].forEach(s => {
     const box = $(`dice-box-${s}`)
     if(box) box.style.display = slots.includes(s) ? "block" : "none"
-  })
-
-  // 주사위 박스 슬롯별 이름 업데이트
-  slots.forEach(s => {
-    const labelEl = $(`${s}-name-label`)
-    // center-col 안의 label은 id가 p1-name-label 등
-    const diceLabel = document.querySelector(`#dice-box-${s} span`)
-    if(diceLabel) {
-      // roomRef 데이터에서 이름 가져오기 어려우니 그냥 slot명 표시
-      // 나중에 필요하면 data를 인자로 넘겨서 이름 표시 가능
-    }
   })
 
   wrap.style.display = "flex"
@@ -192,6 +185,33 @@ function animateDice(rolls, slots, onDone) {
       setTimeout(() => { wrap.style.display="none"; onDone?.() }, 1800)
     }
   }, 60)
+}
+
+// 공격 주사위 (단일 슬롯, 싱글배틀 animateDiceSingle과 동일 방식)
+function animateAttackDice(slot, finalRoll) {
+  return new Promise(resolve => {
+    const wrap  = $("dice-wrap")
+    const diceEl = $(`dice-${slot}`)
+    if(!wrap || !diceEl) { resolve(); return }
+
+    // 해당 슬롯 박스만 표시
+    ;["p1","p2","p3","p4"].forEach(s => {
+      const box = $(`dice-box-${s}`)
+      if(box) box.style.display = s === slot ? "block" : "none"
+    })
+
+    wrap.style.display = "flex"
+    let count = 0
+    const iv = setInterval(() => {
+      diceEl.innerText = rollD10()
+      if(++count >= 16) {
+        clearInterval(iv)
+        diceEl.innerText = finalRoll
+        diceEl.classList.remove("pop"); void diceEl.offsetWidth; diceEl.classList.add("pop")
+        setTimeout(() => { wrap.style.display = "none"; resolve() }, 1000)
+      }
+    }, 60)
+  })
 }
 
 // ── 히트 이펙트 ─────────────────────────────────
@@ -315,8 +335,32 @@ async function doUseMove(moveIdx, targetSlots, data) {
   if(actionDone) return
   actionDone = true
   updateMoveButtons(data)
+
+  // 공격 기술인지 확인 (power 있는 기술만 주사위 연출)
+  const mv       = data[`${mySlot}_entry`]?.[data[`${mySlot}_active_idx`] ?? 0]?.moves?.[moveIdx]
+  const moveInfo = mv ? (window.__moves?.[mv.name] ?? {}) : {}
+  const isAttack = !!moveInfo.power
+
+  let diceRoll = null
+  if(isAttack && targetSlots.length > 0) {
+    // 주사위 굴리기
+    diceRoll = rollD10()
+    // Firestore에 attack_dice_event 써서 4명 모두에게 애니메이션
+    try {
+      const { updateDoc: upd } = await import("https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js")
+      await upd(roomRef, { attack_dice_event: { slot: mySlot, roll: diceRoll, ts: Date.now() } })
+    } catch(e) { console.warn("attack_dice_event 쓰기 실패", e) }
+    // 내 화면에서도 즉시 애니메이션
+    await animateAttackDice(mySlot, diceRoll)
+    // 이벤트 초기화
+    try {
+      const { updateDoc: upd } = await import("https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js")
+      upd(roomRef, { attack_dice_event: null }).catch(() => {})
+    } catch(e) {}
+  }
+
   try {
-    await _useMove({ roomId: ROOM_ID, mySlot, moveIdx, targetSlots })
+    await _useMove({ roomId: ROOM_ID, mySlot, moveIdx, targetSlots, diceRoll })
   } catch(e) {
     console.error("useMove 오류:", e.message)
     actionDone = false
@@ -626,6 +670,7 @@ async function leaveGame() {
       p3_entry: null, p3_active_idx: 0,
       p4_entry: null, p4_active_idx: 0,
       hit_event: null, dice_event: null,
+      attack_dice_event: null,
       assist_request_A: null, assist_request_B: null,
       assist_teamA: null, assist_teamB: null,
       assist_used_A: false, assist_used_B: false,
@@ -671,7 +716,11 @@ function listenRoom() {
       spectEl.innerText = names.length > 0 ? "관전: " + names.join(", ") : ""
     }
 
-    if(!data.p1_entry) return  // 엔트리 아직 없음
+    if(!data.p1_entry) {
+      // 엔트리 아직 없어도 어시스트/싱크 팝업은 표시해야 함
+      if(!isSpectator) { updateAssistUI(data); updateSyncUI(data) }
+      return
+    }
 
     // 싱크로나이즈 맺음 로그 (내 팀에게만 표시)
     if(!isSpectator && mySlot) {
@@ -718,16 +767,19 @@ function listenRoom() {
       if(prefix) triggerBlink(prefix)
     }
 
+    // 공격 주사위 이벤트 (다른 플레이어가 공격할 때 주사위 연출)
+    if(data.attack_dice_event && data.attack_dice_event.ts > lastAttackDiceTs) {
+      lastAttackDiceTs = data.attack_dice_event.ts
+      // 내가 굴린 건 이미 doUseMove에서 처리했으므로 남이 굴린 것만 처리
+      if(data.attack_dice_event.slot !== mySlot) {
+        await animateAttackDice(data.attack_dice_event.slot, data.attack_dice_event.roll)
+      }
+    }
+
     // 주사위 이벤트 (라운드 시작 주사위)
     if(data.dice_event && data.dice_event.ts > lastDiceEventTs) {
       lastDiceEventTs = data.dice_event.ts
       animateDice(data.dice_event.rolls, data.dice_event.slots)
-    }
-
-    // 공격 다이스 이벤트 (공격 전 다이스 값 표시)
-    if(data.attack_dice && data.attack_dice.ts > lastAttackDiceTs) {
-      lastAttackDiceTs = data.attack_dice.ts
-      showAttackDice(data.attack_dice.value)
     }
 
     // 게임 종료
