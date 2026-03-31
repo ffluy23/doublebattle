@@ -8,6 +8,7 @@ import {
 const roomRef = doc(db, "double", ROOM_ID)
 let myUid         = null
 let myDisplayName = null
+let navigated     = false  // ← 중복 이동 방지
 
 const PLAYER_SLOTS = ["player1","player2","player3","player4"]
 const SLOT_TO_FS   = { player1:"p1", player2:"p2", player3:"p3", player4:"p4" }
@@ -90,25 +91,49 @@ function listenRoom() {
 
     updateButtons(room, mySlot)
 
-    // 4명 레디 → 게임 시작
+    // 4명 레디 → 엔트리 업로드 → game_started
     const allReady = PLAYER_SLOTS.every(s => room[`${s}_ready`])
     if(allReady && !room.game_started && mySlot && mySlot !== "spectator") {
+      // 엔트리 먼저 업로드 (4명 각자)
       await copyMyEntry(mySlot)
+
+      // player1만 game_started 세팅
+      // 단, 4명의 엔트리가 모두 올라왔는지 확인 후 세팅
       if(mySlot === "player1") {
-        await updateDoc(roomRef, {
-          game_started:    true,
-          game_started_at: Date.now(),
-          round_count:     0,
-          turn_count:      0,
-          current_order:   [],
-          pending_switches: []
-        })
+        // 최신 상태 다시 읽어서 4명 엔트리 확인
+        let retries = 0
+        while(retries < 10) {
+          const freshSnap = await getDoc(roomRef)
+          const freshRoom = freshSnap.data()
+          const allUploaded = PLAYER_SLOTS.every(s => freshRoom[`${SLOT_TO_FS[s]}_entry`] !== null)
+          if(allUploaded) {
+            await updateDoc(roomRef, {
+              game_started:     true,
+              game_started_at:  Date.now(),
+              round_count:      0,
+              turn_count:       0,
+              current_order:    [],
+              pending_switches: []
+            })
+            break
+          }
+          // 아직 안 올라왔으면 500ms 대기 후 재시도
+          await new Promise(r => setTimeout(r, 500))
+          retries++
+        }
       }
     }
 
     // 게임 시작 → 배틀 화면으로 이동
+    // 4명 엔트리가 모두 올라온 경우에만 이동
     if(room.game_started && mySlot) {
-      const num = ROOM_ID.replace("doublebattleroom","")
+      const allEntryReady = PLAYER_SLOTS.every(s => room[`${SLOT_TO_FS[s]}_entry`] !== null)
+      if(!allEntryReady) return  // 아직 엔트리 업로드 안 끝난 경우 대기
+
+      if(navigated) return  // 중복 이동 방지
+      navigated = true
+
+      const num  = ROOM_ID.replace("doublebattleroom","")
       const dest = mySlot === "spectator"
         ? `../games/doublebattleroom${num}.html?spectator=true`
         : `../games/doublebattleroom${num}.html`
@@ -121,7 +146,6 @@ async function copyMyEntry(mySlot) {
   const fsSlot   = SLOT_TO_FS[mySlot]
   const userSnap = await getDoc(doc(db, "users", myUid))
   const entry    = userSnap.data()?.entry ?? []
-  // maxHp 세팅
   const entryWithMax = entry.map(p => ({ ...p, maxHp: p.hp }))
   await updateDoc(roomRef, {
     [`${fsSlot}_entry`]:      entryWithMax,
